@@ -1,0 +1,63 @@
+# Build once (Magento key point 1): one arm64 image per commit SHA, pushed to ECR with an
+# immutable tag. Later stages only promote this exact tag; nothing is rebuilt per environment.
+version: 0.2
+env:
+  shell: bash
+  exported-variables:
+    - IMAGE_TAG
+    - IMAGE_URI
+phases:
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - echo "arch=$(uname -m)"
+      - REVISION=$(tr -d '[:space:]' < REVISION 2>/dev/null || true)
+      - if [ -z "$REVISION" ]; then REVISION="${CODEBUILD_RESOLVED_SOURCE_VERSION:-unknown}"; fi
+      - SUFFIX=""; if [ "$IMAGE_VARIANT" = "smoke" ]; then SUFFIX="-smoke"; fi
+      - export IMAGE_TAG="${REVISION:0:40}${SUFFIX}"
+      - export IMAGE_URI="${IMAGE_REPO_URI}:${IMAGE_TAG}"
+      - REGISTRY="${IMAGE_REPO_URI%%/*}"
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+      - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws || echo "anonymous ECR Public pulls"
+      - |
+        if aws ecr describe-images --repository-name "$IMAGE_REPO_NAME" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+          echo "image $IMAGE_TAG already exists; reusing it (one build per commit)"; export SKIP_BUILD=1
+        else
+          export SKIP_BUILD=0
+        fi
+  build:
+    commands:
+      - |
+        if [ "$SKIP_BUILD" = "0" ]; then
+          if [ "$IMAGE_VARIANT" = "magento" ]; then CONTEXT=app/magento; else CONTEXT=app/smoke; fi
+          docker build --platform linux/arm64 \
+            --build-arg PHP_IMAGE="$PHP_IMAGE" \
+            --build-arg MAGENTO_REF="$MAGENTO_REF" \
+            --build-arg IMAGE_REVISION="$IMAGE_TAG" \
+            --label org.opencontainers.image.revision="$REVISION" \
+            -t "$IMAGE_URI" "$CONTEXT"
+          docker push "$IMAGE_URI"
+        fi
+  post_build:
+    commands:
+      - set -euo pipefail
+      # Scan gate: ECR scan-on-push must finish and report no findings at the blocked severities.
+      - aws ecr wait image-scan-complete --repository-name "$IMAGE_REPO_NAME" --image-id imageTag="$IMAGE_TAG"
+      - aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPO_NAME" --image-id imageTag="$IMAGE_TAG" --query 'imageScanFindings.findingSeverityCounts' --output json > scan-counts.json
+      - cat scan-counts.json
+      - |
+        python3 - <<'PY'
+        import json, os, sys
+        counts = json.load(open("scan-counts.json")) or {}
+        blocked = [s for s in os.environ["BLOCK_SEVERITIES"].split(",") if s and counts.get(s, 0) > 0]
+        if blocked:
+            sys.exit(f"scan gate failed: findings at {blocked}: {counts}")
+        print("scan gate passed", counts)
+        PY
+      - printf '{"imageUri":"%s","imageTag":"%s","revision":"%s","variant":"%s"}\n' "$IMAGE_URI" "$IMAGE_TAG" "$REVISION" "$IMAGE_VARIANT" > imageDetail.json
+      - mkdir -p deploy && cp scripts/deploy/*.sh deploy/
+artifacts:
+  files:
+    - imageDetail.json
+    - scan-counts.json
+    - deploy/*

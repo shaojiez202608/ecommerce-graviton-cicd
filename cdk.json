@@ -1,0 +1,10 @@
+{
+  "app": ".venv/bin/python infra/app.py",
+  "context": {
+    "config": "config/sandbox.json",
+    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": false,
+    "@aws-cdk/core:target-partitions": ["aws"],
+    "@aws-cdk/customresources:installLatestAwsSdkDefault": false
+  },
+  "watch": {"exclude": ["cdk.out", ".venv", "tests"]}
+}

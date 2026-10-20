@@ -1,0 +1,179 @@
+{
+  "_comment": "Customer-handover profile: four environments, two pipelines (develop -> dev; release -> test -> [QA approval] -> uat -> [business approval] -> prod), resources RETAINED on stack deletion. Instance classes are placeholders; choose from the official pages linked in docs/deployment-guide.md.",
+  "project": "proto-ecom",
+  "region": "us-east-1",
+  "removal_policy": "retain",
+  "ssm_prefix": "/proto-ecom",
+  "tags": {
+    "Project": "ecommerce-graviton-cicd",
+    "Purpose": "prototype"
+  },
+  "build": {
+    "image_variant": "magento",
+    "magento_ref": "2.4.8-p5",
+    "php_image": "public.ecr.aws/docker/library/php:8.3-fpm-bookworm",
+    "codebuild_image": "aws/codebuild/amazonlinux-aarch64-standard:3.0",
+    "block_on_severities": [
+      "CRITICAL",
+      "HIGH"
+    ],
+    "alarm_email": ""
+  },
+  "pipelines": [
+    {
+      "name": "develop",
+      "source_key": "source/develop.zip",
+      "environments": [
+        "dev"
+      ],
+      "approvals_before": {}
+    },
+    {
+      "name": "release",
+      "source_key": "source/release.zip",
+      "environments": [
+        "test",
+        "uat",
+        "prod"
+      ],
+      "approvals_before": {
+        "uat": "QA sign-off",
+        "prod": "Business sign-off"
+      }
+    }
+  ],
+  "environments": {
+    "dev": {
+      "vpc_cidr": "10.40.0.0/16",
+      "max_azs": 2,
+      "nat_gateways": 1,
+      "deployment": "rolling",
+      "desired_count": 1,
+      "task_cpu": 1024,
+      "task_memory_mib": 4096,
+      "db_instance_class": "<DB_INSTANCE_CLASS>",
+      "db_engine_version": "8.4.11",
+      "db_multi_az": false,
+      "cache_node_type": "<CACHE_NODE_TYPE>",
+      "cache_engine_version": "8.1",
+      "search_instance_type": "<SEARCH_INSTANCE_TYPE>",
+      "search_engine_version": "OpenSearch_3.1",
+      "search_data_nodes": 1,
+      "allowed_ingress_cidrs": [],
+      "snapshot_before_migrate": false,
+      "base_url_scheme": "http",
+      "mcf": {
+        "enabled": true,
+        "spapi_mode": "mock",
+        "spapi_region": "na",
+        "marketplaces": {
+          "US": "ATVPDKIKX0DER"
+        },
+        "fulfillment_policy": "FillOrKill",
+        "max_attempts": 3,
+        "tracking_poll_minutes": 5,
+        "inventory_sync_minutes": 60,
+        "mock_ship_after_seconds": 60
+      }
+    },
+    "test": {
+      "vpc_cidr": "10.41.0.0/16",
+      "max_azs": 2,
+      "nat_gateways": 1,
+      "deployment": "rolling",
+      "desired_count": 1,
+      "task_cpu": 1024,
+      "task_memory_mib": 4096,
+      "db_instance_class": "<DB_INSTANCE_CLASS>",
+      "db_engine_version": "8.4.11",
+      "db_multi_az": false,
+      "cache_node_type": "<CACHE_NODE_TYPE>",
+      "cache_engine_version": "8.1",
+      "search_instance_type": "<SEARCH_INSTANCE_TYPE>",
+      "search_engine_version": "OpenSearch_3.1",
+      "search_data_nodes": 1,
+      "allowed_ingress_cidrs": [],
+      "snapshot_before_migrate": false,
+      "base_url_scheme": "http",
+      "mcf": {
+        "enabled": true,
+        "spapi_mode": "mock",
+        "spapi_region": "na",
+        "marketplaces": {
+          "US": "ATVPDKIKX0DER"
+        },
+        "fulfillment_policy": "FillOrKill",
+        "max_attempts": 3,
+        "tracking_poll_minutes": 5,
+        "inventory_sync_minutes": 60,
+        "mock_ship_after_seconds": 60
+      }
+    },
+    "uat": {
+      "vpc_cidr": "10.42.0.0/16",
+      "max_azs": 2,
+      "nat_gateways": 1,
+      "deployment": "blue_green",
+      "desired_count": 2,
+      "task_cpu": 1024,
+      "task_memory_mib": 4096,
+      "db_instance_class": "<DB_INSTANCE_CLASS>",
+      "db_engine_version": "8.4.11",
+      "db_multi_az": false,
+      "cache_node_type": "<CACHE_NODE_TYPE>",
+      "cache_engine_version": "8.1",
+      "search_instance_type": "<SEARCH_INSTANCE_TYPE>",
+      "search_engine_version": "OpenSearch_3.1",
+      "search_data_nodes": 2,
+      "allowed_ingress_cidrs": [],
+      "snapshot_before_migrate": true,
+      "base_url_scheme": "https",
+      "mcf": {
+        "enabled": true,
+        "spapi_mode": "mock",
+        "spapi_region": "na",
+        "marketplaces": {
+          "US": "ATVPDKIKX0DER"
+        },
+        "fulfillment_policy": "FillOrKill",
+        "max_attempts": 3,
+        "tracking_poll_minutes": 5,
+        "inventory_sync_minutes": 60,
+        "mock_ship_after_seconds": 60
+      }
+    },
+    "prod": {
+      "vpc_cidr": "10.43.0.0/16",
+      "max_azs": 2,
+      "nat_gateways": 2,
+      "deployment": "blue_green",
+      "desired_count": 2,
+      "task_cpu": 1024,
+      "task_memory_mib": 4096,
+      "db_instance_class": "<DB_INSTANCE_CLASS>",
+      "db_engine_version": "8.4.11",
+      "db_multi_az": true,
+      "cache_node_type": "<CACHE_NODE_TYPE>",
+      "cache_engine_version": "8.1",
+      "search_instance_type": "<SEARCH_INSTANCE_TYPE>",
+      "search_engine_version": "OpenSearch_3.1",
+      "search_data_nodes": 2,
+      "allowed_ingress_cidrs": [],
+      "snapshot_before_migrate": true,
+      "base_url_scheme": "https",
+      "mcf": {
+        "enabled": true,
+        "spapi_mode": "mock",
+        "spapi_region": "na",
+        "marketplaces": {
+          "US": "ATVPDKIKX0DER"
+        },
+        "fulfillment_policy": "FillOrKill",
+        "max_attempts": 3,
+        "tracking_poll_minutes": 5,
+        "inventory_sync_minutes": 60,
+        "mock_ship_after_seconds": 60
+      }
+    }
+  }
+}

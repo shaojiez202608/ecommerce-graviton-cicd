@@ -1,0 +1,611 @@
+"""Per-environment runtime: VPC, RDS for MySQL, ElastiCache (Valkey), OpenSearch, EFS, ECS on
+Fargate ARM64 (Graviton), internal ALB, monitoring, and the in-VPC deploy project used by the
+pipeline. One stack per environment: proto-ecom-<env>-platform.
+"""
+
+from __future__ import annotations
+
+import json
+
+from aws_cdk import (
+    CfnOutput,
+    Duration,
+    RemovalPolicy,
+    Stack,
+)
+from aws_cdk import aws_cloudwatch as cw
+from aws_cdk import aws_cloudwatch_actions as cw_actions
+from aws_cdk import aws_codebuild as codebuild
+from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_ecr as ecr
+from aws_cdk import aws_ecs as ecs
+from aws_cdk import aws_efs as efs
+from aws_cdk import aws_elasticache as elasticache
+from aws_cdk import aws_elasticloadbalancingv2 as elbv2
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as targets
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_logs as logs
+from aws_cdk import aws_opensearchservice as opensearch
+from aws_cdk import aws_rds as rds
+from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_secretsmanager as sm
+from aws_cdk import aws_sns as sns
+from aws_cdk import aws_sns_subscriptions as subs
+from aws_cdk import aws_ssm as ssm
+from constructs import Construct
+
+from .config import AppConfig, EnvConfig
+
+WEB_PORT = 8080
+REDIS_PORT = 6379
+DB_PORT = 3306
+WWW_DATA_UID = "33"  # www-data in Debian-based official PHP images
+
+
+class PlatformStack(Stack):
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        app_cfg: AppConfig,
+        env_cfg: EnvConfig,
+        image_tag: str | None,
+        **kwargs,
+    ) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+        self.app_cfg = app_cfg
+        self.env_cfg = env_cfg
+        env = env_cfg.name
+        removal = RemovalPolicy.DESTROY if app_cfg.destroy_on_delete else RemovalPolicy.RETAIN
+        log_retention = logs.RetentionDays.ONE_WEEK if app_cfg.destroy_on_delete else logs.RetentionDays.THREE_MONTHS
+        n = lambda *p: app_cfg.name(env, *p)  # noqa: E731
+
+        # ------------------------------------------------------------------ network
+        flow_logs = logs.LogGroup(
+            self, "VpcFlowLogs", log_group_name=f"/{app_cfg.project}/{env}/vpc-flow", retention=log_retention,
+            removal_policy=removal,
+        )
+        self.vpc = ec2.Vpc(
+            self,
+            "Vpc",
+            vpc_name=n("vpc"),
+            ip_addresses=ec2.IpAddresses.cidr(env_cfg.vpc_cidr),
+            max_azs=env_cfg.max_azs,
+            nat_gateways=env_cfg.nat_gateways,
+            restrict_default_security_group=True,
+            subnet_configuration=[
+                # Public subnets host only the NAT gateways; nothing else is placed there.
+                ec2.SubnetConfiguration(name="nat", subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=24,
+                                        map_public_ip_on_launch=False),
+                ec2.SubnetConfiguration(name="app", subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS, cidr_mask=22),
+                ec2.SubnetConfiguration(name="data", subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=24),
+            ],
+            flow_logs={
+                "all": ec2.FlowLogOptions(destination=ec2.FlowLogDestination.to_cloud_watch_logs(flow_logs))
+            },
+        )
+        app_subnets = ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
+        data_subnets = ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED)
+
+        sg = lambda name, desc: ec2.SecurityGroup(  # noqa: E731
+            self, name, vpc=self.vpc, description=desc, allow_all_outbound=False,
+            security_group_name=n(name.lower()),
+        )
+        self.alb_sg = sg("AlbSg", "Internal ALB; ingress only from the VPC and configured internal CIDRs")
+        self.web_sg = sg("WebSg", "Magento web and one-off tasks")
+        self.db_sg = sg("DbSg", "RDS for MySQL")
+        self.cache_sg = sg("CacheSg", "ElastiCache Valkey")
+        self.search_sg = sg("SearchSg", "OpenSearch domain")
+        self.efs_sg = sg("EfsSg", "EFS shared media/var")
+        self.deploy_sg = sg("DeploySg", "In-VPC CodeBuild deploy and smoke test")
+
+        for cidr in (env_cfg.vpc_cidr, *env_cfg.allowed_ingress_cidrs):
+            self.alb_sg.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), f"HTTP from {cidr}")
+        self.alb_sg.add_egress_rule(self.web_sg, ec2.Port.tcp(WEB_PORT), "to web tasks")
+        self.web_sg.add_ingress_rule(self.alb_sg, ec2.Port.tcp(WEB_PORT), "from ALB")
+        for target, port, label in (
+            (self.db_sg, DB_PORT, "MySQL"),
+            (self.cache_sg, REDIS_PORT, "Valkey"),
+            (self.search_sg, 443, "OpenSearch"),
+            (self.efs_sg, 2049, "NFS"),
+        ):
+            target.add_ingress_rule(self.web_sg, ec2.Port.tcp(port), f"{label} from web/one-off tasks")
+            self.web_sg.add_egress_rule(target, ec2.Port.tcp(port), f"to {label}")
+        # HTTPS egress for ECR/Secrets Manager/SSM/CloudWatch via NAT; Magento itself needs no other egress.
+        self.web_sg.add_egress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "AWS APIs over HTTPS via NAT")
+        self.deploy_sg.add_egress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "AWS APIs over HTTPS via NAT")
+        self.deploy_sg.add_egress_rule(self.alb_sg, ec2.Port.tcp(80), "smoke test against internal ALB")
+        self.alb_sg.add_ingress_rule(self.deploy_sg, ec2.Port.tcp(80), "smoke test from deploy project")
+
+        # ------------------------------------------------------------------ alarms topic
+        self.alarm_topic = sns.Topic(
+            self, "AlarmTopic", topic_name=n("alarms"),
+            master_key=None, enforce_ssl=True,
+        )
+        if app_cfg.build.alarm_email:
+            self.alarm_topic.add_subscription(subs.EmailSubscription(app_cfg.build.alarm_email))
+
+        # ------------------------------------------------------------------ secrets
+        self.db_secret = rds.DatabaseSecret(self, "DbSecret", username="magento", secret_name=n("db"))
+        self.app_secret = sm.Secret(
+            self,
+            "AppSecret",
+            secret_name=n("magento"),
+            description="Magento crypt key and admin credentials (generated)",
+            generate_secret_string=sm.SecretStringGenerator(
+                secret_string_template=json.dumps({"admin_user": "admin"}),
+                generate_string_key="admin_password",
+                exclude_punctuation=True,
+                password_length=24,
+            ),
+            removal_policy=removal,
+        )
+        self.crypt_secret = sm.Secret(
+            self, "CryptKey", secret_name=n("crypt-key"),
+            description="Magento crypt key (32 chars)",
+            generate_secret_string=sm.SecretStringGenerator(exclude_punctuation=True, password_length=32),
+            removal_policy=removal,
+        )
+        self.search_secret = sm.Secret(
+            self, "SearchSecret", secret_name=n("opensearch"),
+            description="OpenSearch fine-grained access control master user",
+            generate_secret_string=sm.SecretStringGenerator(
+                secret_string_template=json.dumps({"username": "magento"}),
+                generate_string_key="password",
+                password_length=24,
+                require_each_included_type=True,
+                exclude_characters="\"'\\/@ `",
+            ),
+            removal_policy=removal,
+        )
+        self.cache_secret = sm.Secret(
+            self, "CacheAuth", secret_name=n("valkey-auth"),
+            description="ElastiCache AUTH token",
+            generate_secret_string=sm.SecretStringGenerator(exclude_punctuation=True, password_length=32),
+            removal_policy=removal,
+        )
+
+        # ------------------------------------------------------------------ database
+        params = rds.ParameterGroup(
+            self, "DbParams",
+            engine=rds.DatabaseInstanceEngine.mysql(
+                version=rds.MysqlEngineVersion.of(env_cfg.db_engine_version, ".".join(env_cfg.db_engine_version.split(".")[:2]))
+            ),
+            parameters={"require_secure_transport": "ON", "log_bin_trust_function_creators": "1"},
+        )
+        self.db = rds.DatabaseInstance(
+            self,
+            "Db",
+            instance_identifier=n("mysql"),
+            engine=rds.DatabaseInstanceEngine.mysql(
+                version=rds.MysqlEngineVersion.of(env_cfg.db_engine_version, ".".join(env_cfg.db_engine_version.split(".")[:2]))
+            ),
+            instance_type=ec2.InstanceType(env_cfg.db_instance_class),
+            vpc=self.vpc,
+            vpc_subnets=data_subnets,
+            security_groups=[self.db_sg],
+            credentials=rds.Credentials.from_secret(self.db_secret),
+            database_name="magento",
+            parameter_group=params,
+            multi_az=env_cfg.db_multi_az,
+            storage_encrypted=True,
+            allocated_storage=20,
+            storage_type=rds.StorageType.GP3,
+            backup_retention=Duration.days(1 if app_cfg.destroy_on_delete else 7),
+            delete_automated_backups=app_cfg.destroy_on_delete,
+            deletion_protection=not app_cfg.destroy_on_delete,
+            removal_policy=removal if not app_cfg.destroy_on_delete else RemovalPolicy.DESTROY,
+            cloudwatch_logs_exports=["error", "slowquery"],
+            cloudwatch_logs_retention=log_retention,
+            auto_minor_version_upgrade=True,
+            publicly_accessible=False,
+        )
+
+        # ------------------------------------------------------------------ cache (Valkey)
+        cache_subnets = elasticache.CfnSubnetGroup(
+            self, "CacheSubnets",
+            description=f"{n('valkey')} subnets",
+            cache_subnet_group_name=n("valkey"),
+            subnet_ids=self.vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED).subnet_ids,
+        )
+        multi_node = env_cfg.db_multi_az
+        self.cache = elasticache.CfnReplicationGroup(
+            self,
+            "Cache",
+            replication_group_id=n("valkey"),
+            replication_group_description=f"Magento cache and sessions ({env})",
+            engine="valkey",
+            engine_version=env_cfg.cache_engine_version,
+            cache_node_type=env_cfg.cache_node_type,
+            num_cache_clusters=2 if multi_node else 1,
+            automatic_failover_enabled=multi_node,
+            multi_az_enabled=multi_node,
+            cache_subnet_group_name=cache_subnets.cache_subnet_group_name,
+            security_group_ids=[self.cache_sg.security_group_id],
+            at_rest_encryption_enabled=True,
+            transit_encryption_enabled=True,
+            transit_encryption_mode="required",
+            auth_token=self.cache_secret.secret_value.unsafe_unwrap(),  # dynamic reference, not plaintext
+            port=REDIS_PORT,
+            snapshot_retention_limit=0 if app_cfg.destroy_on_delete else 1,
+        )
+        self.cache.add_dependency(cache_subnets)
+        self.cache.apply_removal_policy(removal)
+
+        # ------------------------------------------------------------------ search (OpenSearch)
+        search_logs = logs.LogGroup(
+            self, "SearchAppLogs", log_group_name=f"/{app_cfg.project}/{env}/opensearch-app",
+            retention=log_retention, removal_policy=removal,
+        )
+        zone_aware = env_cfg.search_data_nodes > 1
+        self.search = opensearch.Domain(
+            self,
+            "Search",
+            domain_name=n("search"),
+            version=opensearch.EngineVersion.open_search(env_cfg.search_engine_version.replace("OpenSearch_", "")),
+            vpc=self.vpc,
+            vpc_subnets=[ec2.SubnetSelection(
+                subnets=self.vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED).subnets[
+                    : (2 if zone_aware else 1)
+                ]
+            )],
+            security_groups=[self.search_sg],
+            capacity=opensearch.CapacityConfig(
+                data_nodes=env_cfg.search_data_nodes,
+                data_node_instance_type=env_cfg.search_instance_type,
+                multi_az_with_standby_enabled=False,
+            ),
+            zone_awareness=opensearch.ZoneAwarenessConfig(enabled=zone_aware, availability_zone_count=2)
+            if zone_aware else opensearch.ZoneAwarenessConfig(enabled=False),
+            ebs=opensearch.EbsOptions(volume_size=20, volume_type=ec2.EbsDeviceVolumeType.GP3),
+            encryption_at_rest=opensearch.EncryptionAtRestOptions(enabled=True),
+            node_to_node_encryption=True,
+            enforce_https=True,
+            tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
+            fine_grained_access_control=opensearch.AdvancedSecurityOptions(
+                master_user_name="magento",
+                master_user_password=self.search_secret.secret_value_from_json("password"),
+            ),
+            logging=opensearch.LoggingOptions(app_log_enabled=True, app_log_group=search_logs),
+            removal_policy=removal,
+        )
+        # Fine-grained access control authenticates every request; the resource policy allows the
+        # domain to be reached from inside the VPC only (VPC endpoint + security group).
+        self.search.add_access_policies(
+            iam.PolicyStatement(
+                principals=[iam.AnyPrincipal()],
+                actions=["es:ESHttp*"],
+                resources=[f"{self.search.domain_arn}/*"],
+            )
+        )
+
+        # ------------------------------------------------------------------ shared files (EFS)
+        self.fs = efs.FileSystem(
+            self, "SharedFs",
+            file_system_name=n("shared"),
+            vpc=self.vpc,
+            vpc_subnets=data_subnets,
+            security_group=self.efs_sg,
+            encrypted=True,
+            removal_policy=removal,
+            enable_automatic_backups=not app_cfg.destroy_on_delete,
+            performance_mode=efs.PerformanceMode.GENERAL_PURPOSE,
+            throughput_mode=efs.ThroughputMode.ELASTIC,
+        )
+        posix = efs.PosixUser(uid=WWW_DATA_UID, gid=WWW_DATA_UID)
+        acl = efs.Acl(owner_uid=WWW_DATA_UID, owner_gid=WWW_DATA_UID, permissions="0755")
+        media_ap = self.fs.add_access_point("MediaAp", path="/media", posix_user=posix, create_acl=acl)
+        var_ap = self.fs.add_access_point("VarAp", path="/var", posix_user=posix, create_acl=acl)
+
+        # ------------------------------------------------------------------ ECS
+        self.cluster = ecs.Cluster(
+            self, "Cluster", cluster_name=n("cluster"), vpc=self.vpc,
+            container_insights_v2=ecs.ContainerInsights.ENABLED,
+        )
+        app_logs = logs.LogGroup(
+            self, "AppLogs", log_group_name=f"/{app_cfg.project}/{env}/magento", retention=log_retention,
+            removal_policy=removal,
+        )
+        repo = ecr.Repository.from_repository_name(self, "Repo", app_cfg.name("magento"))
+        image_ref = image_tag or "bootstrap"
+        self.image_tag = image_ref
+        ssm_base_url = ssm.StringParameter(
+            self, "BaseUrlParam", parameter_name=app_cfg.ssm(env, "base_url"),
+            string_value="http://pending.invalid/",  # overwritten below once the ALB exists
+            description="Magento base URL injected at runtime",
+        )
+        ssm_admin = ssm.StringParameter(
+            self, "AdminPathParam", parameter_name=app_cfg.ssm(env, "admin_frontname"),
+            string_value=f"admin_{env}", description="Magento admin front name injected at runtime",
+        )
+
+        def task_definition(construct_id: str, family: str, cpu: int, mem: int, command: list[str] | None):
+            td = ecs.FargateTaskDefinition(
+                self, construct_id, family=family, cpu=cpu, memory_limit_mib=mem,
+                runtime_platform=ecs.RuntimePlatform(
+                    cpu_architecture=ecs.CpuArchitecture.ARM64,
+                    operating_system_family=ecs.OperatingSystemFamily.LINUX,
+                ),
+            )
+            for ap, vol in ((media_ap, "media"), (var_ap, "var")):
+                td.add_volume(
+                    name=vol,
+                    efs_volume_configuration=ecs.EfsVolumeConfiguration(
+                        file_system_id=self.fs.file_system_id,
+                        transit_encryption="ENABLED",
+                        authorization_config=ecs.AuthorizationConfig(access_point_id=ap.access_point_id, iam="ENABLED"),
+                    ),
+                )
+            self.fs.grant_read_write(td.task_role)
+            container = td.add_container(
+                "web",
+                container_name="web",
+                image=ecs.ContainerImage.from_ecr_repository(repo, image_ref),
+                command=command,
+                entry_point=["/usr/local/bin/magento-entrypoint"] if command is None else ["/bin/sh", "-c"],
+                logging=ecs.LogDriver.aws_logs(stream_prefix=family, log_group=app_logs),
+                port_mappings=[ecs.PortMapping(container_port=WEB_PORT)] if command is None else None,
+                environment={
+                    "APP_ENV": env,
+                    "MAGENTO_DB_HOST": self.db.db_instance_endpoint_address,
+                    "MAGENTO_DB_NAME": "magento",
+                    "MAGENTO_REDIS_HOST": self.cache.attr_primary_end_point_address,
+                    "MAGENTO_REDIS_PORT": str(REDIS_PORT),
+                    "MAGENTO_REDIS_TLS": "1",
+                    "MAGENTO_OPENSEARCH_HOST": self.search.domain_endpoint,
+                    "MAGENTO_OPENSEARCH_PREFIX": f"magento_{env}",
+                    "MAGENTO_CACHE_PREFIX": f"{env}_",
+                },
+                secrets={
+                    "MAGENTO_DB_USER": ecs.Secret.from_secrets_manager(self.db_secret, "username"),
+                    "MAGENTO_DB_PASSWORD": ecs.Secret.from_secrets_manager(self.db_secret, "password"),
+                    "MAGENTO_CRYPT_KEY": ecs.Secret.from_secrets_manager(self.crypt_secret),
+                    "MAGENTO_OPENSEARCH_USER": ecs.Secret.from_secrets_manager(self.search_secret, "username"),
+                    "MAGENTO_OPENSEARCH_PASSWORD": ecs.Secret.from_secrets_manager(self.search_secret, "password"),
+                    "MAGENTO_REDIS_PASSWORD": ecs.Secret.from_secrets_manager(self.cache_secret),
+                    "MAGENTO_BASE_URL": ecs.Secret.from_ssm_parameter(ssm_base_url),
+                    "MAGENTO_ADMIN_FRONTNAME": ecs.Secret.from_ssm_parameter(ssm_admin),
+                    **(
+                        {
+                            "MAGENTO_ADMIN_USER": ecs.Secret.from_secrets_manager(self.app_secret, "admin_user"),
+                            "MAGENTO_ADMIN_PASSWORD": ecs.Secret.from_secrets_manager(self.app_secret, "admin_password"),
+                        }
+                        if command is not None else {}
+                    ),
+                },
+            )
+            container.add_mount_points(
+                ecs.MountPoint(source_volume="media", container_path="/var/www/magento/pub/media", read_only=False),
+                ecs.MountPoint(source_volume="var", container_path="/var/www/magento/var", read_only=False),
+            )
+            return td
+
+        self.web_td = task_definition("WebTask", n("web"), env_cfg.task_cpu, env_cfg.task_memory_mib, None)
+        # One-off task for setup:install / setup:upgrade and cache:flush (command chosen at run time).
+        self.ops_td = task_definition("OpsTask", n("ops"), env_cfg.task_cpu, env_cfg.task_memory_mib,
+                                      ["/usr/local/bin/magento-migrate"])
+
+        # ------------------------------------------------------------------ ALB (internal only)
+        alb_logs = s3.Bucket(
+            self, "AlbLogs",
+            bucket_name=None,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            versioned=False,
+            removal_policy=removal,
+            auto_delete_objects=app_cfg.destroy_on_delete,
+            lifecycle_rules=[s3.LifecycleRule(expiration=Duration.days(30 if app_cfg.destroy_on_delete else 365))],
+        )
+        self.alb = elbv2.ApplicationLoadBalancer(
+            self, "Alb", load_balancer_name=n("alb"), vpc=self.vpc, internet_facing=False,
+            vpc_subnets=app_subnets, security_group=self.alb_sg, drop_invalid_header_fields=True,
+        )
+        self.alb.log_access_logs(alb_logs, prefix="alb")
+        self.listener = self.alb.add_listener("Http", port=80, open=False,
+                                              default_action=elbv2.ListenerAction.fixed_response(404))
+        health = elbv2.HealthCheck(path="/health_check.php", healthy_http_codes="200",
+                                   interval=Duration.seconds(15), healthy_threshold_count=2)
+
+        def tg(construct_id: str) -> elbv2.ApplicationTargetGroup:
+            return elbv2.ApplicationTargetGroup(
+                self, construct_id, vpc=self.vpc, port=WEB_PORT, protocol=elbv2.ApplicationProtocol.HTTP,
+                target_type=elbv2.TargetType.IP, health_check=health,
+                deregistration_delay=Duration.seconds(30),
+            )
+
+        self.blue_tg = tg("BlueTg")
+        prod_rule = elbv2.ApplicationListenerRule(
+            self, "ProdRule", listener=self.listener, priority=10,
+            conditions=[elbv2.ListenerCondition.path_patterns(["/*"])],
+            action=elbv2.ListenerAction.forward([self.blue_tg]),
+        )
+        base_url = f"{env_cfg.base_url_scheme}://{self.alb.load_balancer_dns_name}/"
+        ssm_base_url.node.default_child.add_property_override("Value", base_url)
+
+        # ------------------------------------------------------------------ ECS service
+        running = image_tag is not None
+        self.service = ecs.FargateService(
+            self,
+            "WebService",
+            service_name=n("web"),
+            cluster=self.cluster,
+            task_definition=self.web_td,
+            desired_count=env_cfg.desired_count if running else 0,
+            vpc_subnets=app_subnets,
+            security_groups=[self.web_sg],
+            assign_public_ip=False,
+            enable_execute_command=False,
+            min_healthy_percent=100,
+            max_healthy_percent=200,
+            circuit_breaker=ecs.DeploymentCircuitBreaker(enable=True, rollback=True)
+            if env_cfg.deployment == "rolling" else None,
+            health_check_grace_period=Duration.seconds(120),
+            platform_version=ecs.FargatePlatformVersion.LATEST,
+            **(
+                {"deployment_strategy": ecs.DeploymentStrategy.BLUE_GREEN, "bake_time": Duration.minutes(10)}
+                if env_cfg.deployment == "blue_green" else {}
+            ),
+        )
+        if env_cfg.deployment == "blue_green":
+            # Amazon ECS native blue/green: ECS registers the new revision in the green target
+            # group, shifts the production listener rule, keeps blue for the bake time, and
+            # rolls back by shifting the rule back.
+            self.green_tg = tg("GreenTg")
+            target = self.service.load_balancer_target(
+                container_name="web",
+                container_port=WEB_PORT,
+                alternate_target=ecs.AlternateTarget(
+                    "AlternateTarget",
+                    alternate_target_group=self.green_tg,
+                    production_listener=ecs.ListenerRuleConfiguration.application_listener_rule(prod_rule),
+                ),
+            )
+            target.attach_to_application_target_group(self.blue_tg)
+        else:
+            self.service.attach_to_application_target_group(self.blue_tg)
+        self.service.node.add_dependency(prod_rule)
+
+        # ------------------------------------------------------------------ monitoring
+        self._alarms()
+        rule = events.Rule(
+            self, "EcsDeployFailed",
+            event_pattern=events.EventPattern(
+                source=["aws.ecs"],
+                detail_type=["ECS Deployment State Change"],
+                detail={"eventName": ["SERVICE_DEPLOYMENT_FAILED"]},
+                resources=[self.service.service_arn],
+            ),
+        )
+        rule.add_target(targets.SnsTopic(self.alarm_topic))
+
+        # ------------------------------------------------------------------ deploy project (in VPC)
+        self.deploy_project = self._deploy_project(n, app_subnets, log_retention, removal)
+
+        CfnOutput(self, "AlbDnsName", value=self.alb.load_balancer_dns_name)
+        CfnOutput(self, "ImageTag", value=self.image_tag)
+        # Deploy metadata consumed by scripts/deploy/ecs_deploy.sh (no cross-stack exports).
+        ssm.StringParameter(
+            self, "DeployMeta", parameter_name=app_cfg.ssm(env, "deploy"),
+            description="Deployment metadata for the pipeline deploy script",
+            string_value=self.to_json_string({
+                "cluster": self.cluster.cluster_name,
+                "service": self.service.service_name,
+                "webFamily": n("web"),
+                "opsFamily": n("ops"),
+                "subnets": [s.subnet_id for s in self.vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets],
+                "securityGroup": self.web_sg.security_group_id,
+                "albDns": self.alb.load_balancer_dns_name,
+                "dbInstance": self.db.instance_identifier,
+                "snapshotBeforeMigrate": env_cfg.snapshot_before_migrate,
+                "desiredCount": env_cfg.desired_count,
+                "deployment": env_cfg.deployment,
+            }),
+        )
+
+    # ---------------------------------------------------------------------- helpers
+    def _alarms(self) -> None:
+        action = cw_actions.SnsAction(self.alarm_topic)
+
+        def alarm(cid: str, metric: cw.IMetric, threshold: float, desc: str,
+                  cmp=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, periods: int = 3):
+            a = cw.Alarm(self, cid, metric=metric, threshold=threshold, evaluation_periods=periods,
+                         comparison_operator=cmp, alarm_description=desc,
+                         treat_missing_data=cw.TreatMissingData.NOT_BREACHING)
+            a.add_alarm_action(action)
+            return a
+
+        alarm("Alb5xx", self.alb.metrics.http_code_target(elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
+                                                          period=Duration.minutes(1)), 10,
+              "Magento returned 5xx responses")
+        alarm("UnhealthyTargets", self.blue_tg.metrics.unhealthy_host_count(period=Duration.minutes(1)), 1,
+              "ALB has unhealthy Magento targets")
+        alarm("EcsCpuHigh", self.service.metric_cpu_utilization(period=Duration.minutes(5)), 85, "ECS CPU high")
+        alarm("EcsMemHigh", self.service.metric_memory_utilization(period=Duration.minutes(5)), 85, "ECS memory high")
+        alarm("DbCpuHigh", self.db.metric_cpu_utilization(period=Duration.minutes(5)), 85, "RDS CPU high")
+        alarm("DbStorageLow", self.db.metric_free_storage_space(period=Duration.minutes(5)), 2 * 1024**3,
+              "RDS free storage low", cmp=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD)
+        alarm("SearchRed", self.search.metric_cluster_status_red(period=Duration.minutes(1)), 1,
+              "OpenSearch cluster status red", periods=1)
+        alarm("CacheCpuHigh", cw.Metric(namespace="AWS/ElastiCache", metric_name="EngineCPUUtilization",
+                                        dimensions_map={"ReplicationGroupId": self.cache.ref},
+                                        period=Duration.minutes(5), statistic="Average"), 85,
+              "Valkey engine CPU high")
+
+    def _deploy_project(self, n, app_subnets, log_retention, removal) -> codebuild.Project:
+        env = self.env_cfg.name
+        log_group = logs.LogGroup(self, "DeployLogs", log_group_name=f"/{self.app_cfg.project}/{env}/deploy",
+                                  retention=log_retention, removal_policy=removal)
+        project = codebuild.PipelineProject(
+            self,
+            "DeployProject",
+            project_name=n("deploy"),
+            description=f"Promote an image to {env}: migrate once, update service, flush cache, smoke test",
+            vpc=self.vpc,
+            subnet_selection=app_subnets,
+            security_groups=[self.deploy_sg],
+            environment=codebuild.BuildEnvironment(
+                build_image=codebuild.LinuxArmBuildImage.from_code_build_image_id(self.app_cfg.build.codebuild_image),
+                compute_type=codebuild.ComputeType.SMALL,
+            ),
+            environment_variables={
+                "TARGET_ENV": codebuild.BuildEnvironmentVariable(value=env),
+                "SSM_PREFIX": codebuild.BuildEnvironmentVariable(value=self.app_cfg.ssm_prefix),
+            },
+            build_spec=codebuild.BuildSpec.from_object({
+                "version": "0.2",
+                "phases": {"build": {"commands": [
+                    "bash deploy/ecs_deploy.sh \"$TARGET_ENV\" imageDetail.json",
+                    "bash deploy/smoke_test.sh \"$TARGET_ENV\"",
+                ]}},
+            }),
+            logging=codebuild.LoggingOptions(cloud_watch=codebuild.CloudWatchLoggingOptions(log_group=log_group)),
+            timeout=Duration.minutes(90),
+        )
+        role = project.role
+        stack = Stack.of(self)
+        arn = lambda svc, res: f"arn:{stack.partition}:{svc}:{stack.region}:{stack.account}:{res}"  # noqa: E731
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[arn("ssm", f"parameter{self.app_cfg.ssm_prefix}/{env}/*")],
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition"],
+            resources=["*"],  # these ECS actions do not support resource-level permissions
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:UpdateService", "ecs:DescribeServices"],
+            resources=[self.service.service_arn],
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:ListServiceDeployments", "ecs:DescribeServiceDeployments"],
+            resources=["*"],  # service deployment ARNs are generated per deployment
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:RunTask"],
+            resources=[arn("ecs", f"task-definition/{n('ops')}:*")],
+            conditions={"ArnEquals": {"ecs:cluster": self.cluster.cluster_arn}},
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:DescribeTasks", "ecs:ListTasks"],
+            resources=[arn("ecs", f"task/{self.cluster.cluster_name}/*"),
+                       arn("ecs", f"container-instance/{self.cluster.cluster_name}/*")],
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:ListTasks"], resources=["*"],
+            conditions={"ArnEquals": {"ecs:cluster": self.cluster.cluster_arn}},
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[self.web_td.task_role.role_arn, self.web_td.obtain_execution_role().role_arn,
+                       self.ops_td.task_role.role_arn, self.ops_td.obtain_execution_role().role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}},
+        ))
+        if self.env_cfg.snapshot_before_migrate:
+            role.add_to_principal_policy(iam.PolicyStatement(
+                actions=["rds:CreateDBSnapshot", "rds:DescribeDBSnapshots", "rds:AddTagsToResource"],
+                resources=[self.db.instance_arn, arn("rds", f"snapshot:{n('predeploy')}-*")],
+            ))
+        return project

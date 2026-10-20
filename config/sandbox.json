@@ -1,0 +1,46 @@
+{
+  "_comment": "Sandbox profile: one environment (dev) + pipeline + MCF bridge in mock mode. Instance classes below are placeholders for a short-lived test deployment, not sizing advice; pick families/sizes from the official pages linked in docs/deployment-guide.md.",
+  "project": "proto-ecom",
+  "region": "us-east-1",
+  "removal_policy": "destroy",
+  "ssm_prefix": "/proto-ecom",
+  "tags": {
+    "Project": "ecommerce-graviton-cicd",
+    "Purpose": "prototype",
+    "Teardown": "after-test"
+  },
+  "build": {
+    "image_variant": "smoke",
+    "magento_ref": "2.4.8-p5",
+    "php_image": "public.ecr.aws/docker/library/php:8.3-fpm-bookworm",
+    "codebuild_image": "aws/codebuild/amazonlinux-aarch64-standard:3.0",
+    "block_on_severities": ["CRITICAL"],
+    "alarm_email": ""
+  },
+  "pipelines": [
+    {"name": "develop", "source_key": "source/develop.zip", "environments": ["dev"], "approvals_before": {}}
+  ],
+  "environments": {
+    "dev": {
+      "vpc_cidr": "10.40.0.0/16",
+      "max_azs": 2,
+      "nat_gateways": 1,
+      "deployment": "rolling",
+      "desired_count": 1,
+      "task_cpu": 1024,
+      "task_memory_mib": 4096,
+      "db_instance_class": "<DB_INSTANCE_CLASS>",
+      "db_engine_version": "8.4.11",
+      "db_multi_az": false,
+      "cache_node_type": "<CACHE_NODE_TYPE>",
+      "cache_engine_version": "8.1",
+      "search_instance_type": "<SEARCH_INSTANCE_TYPE>",
+      "search_engine_version": "OpenSearch_3.1",
+      "search_data_nodes": 1,
+      "allowed_ingress_cidrs": [],
+      "snapshot_before_migrate": false,
+      "base_url_scheme": "http",
+      "mcf": {"enabled": true, "spapi_mode": "mock", "spapi_region": "na", "marketplaces": {"US": "ATVPDKIKX0DER"}, "fulfillment_policy": "FillOrKill", "max_attempts": 3, "tracking_poll_minutes": 5, "inventory_sync_minutes": 60, "mock_ship_after_seconds": 60}
+    }
+  }
+}

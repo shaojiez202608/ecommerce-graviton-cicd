@@ -1,0 +1,17 @@
+{
+  "_comment": "Synthetic 'Order Paid' event details. Addresses use reserved example data; recipient names drive mock behaviour (see src/mcf/mcf_bridge/spapi.py).",
+  "orders": [
+    {"orderId": "100000101", "marketplace": "US", "placedAt": "2026-10-20T08:00:00Z", "shippingSpeed": "standard",
+     "shippingAddress": {"name": "Alex Example", "addressLine1": "100 Example Street", "city": "Springfield", "stateOrRegion": "WA", "postalCode": "98000", "countryCode": "US", "phone": "+1-555-0100"},
+     "lines": [{"sku": "SENSOR-TEMP-WHT", "quantity": 2}, {"sku": "HUB-MINI-V2", "quantity": 1}]},
+    {"orderId": "100000102", "marketplace": "US", "placedAt": "2026-10-20T08:05:00Z", "shippingSpeed": "expedited",
+     "shippingAddress": {"name": "FAIL_TRANSIENT", "addressLine1": "200 Sample Avenue", "city": "Springfield", "stateOrRegion": "WA", "postalCode": "98000", "countryCode": "US"},
+     "lines": [{"sku": "SENSOR-TEMP-BLK", "quantity": 1}]},
+    {"orderId": "100000103", "marketplace": "US", "placedAt": "2026-10-20T08:10:00Z", "shippingSpeed": "standard",
+     "shippingAddress": {"name": "FAIL_ALWAYS", "addressLine1": "300 Test Road", "city": "Springfield", "stateOrRegion": "WA", "postalCode": "98000", "countryCode": "US"},
+     "lines": [{"sku": "HUB-MINI-V2", "quantity": 1}]},
+    {"orderId": "100000104", "marketplace": "US", "placedAt": "2026-10-20T08:15:00Z", "shippingSpeed": "standard",
+     "shippingAddress": {"name": "Sam Example", "addressLine1": "400 Demo Lane", "city": "Springfield", "stateOrRegion": "WA", "postalCode": "98000", "countryCode": "US"},
+     "lines": [{"sku": "UNMAPPED-SKU", "quantity": 1}]}
+  ]
+}
