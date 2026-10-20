@@ -1,0 +1,32 @@
+# Graviton（arm64）兼容性清单与实测记录（FR-4）
+
+核实日期 2026-10-20。「官方依据」只列官方发布说明/文档/镜像清单；「实测」只写本次真正跑过的结果（详见 `VERIFICATION.md`、`DEPLOYMENT-LOG.md`），没跑的写「未运行」。
+
+| # | 依赖 / 组件 | 本原型使用 | arm64 支持（官方依据） | 实测 |
+|---|---|---|---|---|
+| G-01 | 计算：ECS on Fargate | `runtimePlatform.cpuArchitecture=ARM64` | Fargate Linux 容器支持 ARM64（F-05） | 见 DEPLOYMENT-LOG「ECS 任务」 |
+| G-02 | PHP 8.3-fpm 运行时镜像 | `public.ecr.aws/docker/library/php:8.3-fpm-bookworm` | Docker 官方镜像提供 arm64v8；ECR Public 镜像清单含 arm64（F-23）；Graviton 指南：PHP 8.2+ 表现良好（F-03） | 见 VERIFICATION「镜像构建」 |
+| G-03 | PHP 扩展（bcmath、gd、intl、pdo_mysql、soap、sockets、sodium、xsl、zip、opcache、ftp） | `docker-php-ext-install` 在 arm64 构建机上从源码编译 | 官方镜像提供 `docker-php-ext-*` 构建工具，与架构无关；无预编译 x86 二进制依赖 | 见 VERIFICATION「镜像构建」 |
+| G-04 | Composer 2 | `public.ecr.aws/docker/library/composer:2`（只取 `/usr/bin/composer`，PHP 脚本） | 官方镜像提供 arm64v8（F-23） | 同上 |
+| G-05 | nginx | Debian bookworm `nginx-light` 包 | Debian arm64 官方仓库包；基础镜像为 arm64 | 同上 |
+| G-06 | Magento Open Source 2.4.8 代码与 Composer 依赖 | 从官方 Git 仓库构建 | 纯 PHP；Adobe 系统要求页未声明 CPU 架构（F-02）。若加入含原生扩展的第三方模块，需逐个确认 | 见 VERIFICATION「镜像构建」（Magento 变体） |
+| G-07 | 数据库：RDS for MySQL 8.4 | Graviton 实例族（`config` 中 `db.*g.*` 占位值） | RDS 支持 Graviton 实例（F-04）；MySQL 8.4 可选 Graviton 实例族（F-15）；Magento 2.4.8 要求 MySQL 8.4（F-02） | 见 DEPLOYMENT-LOG |
+| G-08 | 缓存/会话：ElastiCache for Valkey 8.1 | `cache.*g.*` 节点、TLS + AUTH | Valkey 当前代节点包含 Graviton 实例族（F-15） | 见 DEPLOYMENT-LOG |
+| G-09 | 搜索：Amazon OpenSearch Service 3.1 | `*.search` Graviton 实例（占位） | 服务支持 Graviton 实例（F-04）；3.x 可选 Graviton 实例族（F-15）；2.4.8 要求 OpenSearch 3（F-02） | 见 DEPLOYMENT-LOG |
+| G-10 | 构建：CodeBuild | `ARM_CONTAINER` + `aws/codebuild/amazonlinux-aarch64-standard:3.0`，特权模式 docker build | F-07、F-08 | 见 VERIFICATION「流水线」 |
+| G-11 | 函数：Lambda（MCF 桥接） | `python3.14`、`arm64`，仅用标准库 + 运行时自带 boto3 | 所有受支持运行时都支持 arm64（F-06） | 见 DEPLOYMENT-LOG「MCF」 |
+| G-12 | 镜像仓库：ECR | 单架构 arm64 镜像 | ECR 支持多架构清单（F-04）；本原型只推 arm64 | 见 VERIFICATION |
+| G-13 | 共享文件：EFS | `pub/media`、`var/` | 与客户端 CPU 架构无关（NFS） | 见 DEPLOYMENT-LOG |
+| G-14 | CDK 自带的自定义资源 Lambda（S3 自动清空、日志保留、OpenSearch 日志策略等） | CDK 生成 | 由 CDK 决定架构，未强制 arm64 | 记入 SECURITY-NOTES「已知例外」 |
+
+## 调优点（只列做法，不给数字）
+
+- OPcache：生产模式开启、关闭时间戳校验（`opcache.validate_timestamps=0`），因为镜像不可变。数值在 `app/magento/docker/php.ini`，按压测结果调整。
+- php-fpm 进程数随任务 CPU/内存调整（`php-fpm-pool.conf`）。
+- 构建：`setup:static-content:deploy --jobs` 随 CodeBuild 计算类型调整；Magento 变体构建时间较长，构建超时设为参数。
+- Graviton 世代选择、实例大小、价格以官方页面为准：
+  - EC2/Graviton：https://aws.amazon.com/ec2/graviton/
+  - RDS 实例类：https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.html
+  - ElastiCache 节点类型：https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/CacheNodes.SupportedTypes.html
+  - OpenSearch 实例类型：https://docs.aws.amazon.com/opensearch-service/latest/developerguide/supported-instance-types.html
+  - Fargate 任务 CPU/内存组合：https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html
