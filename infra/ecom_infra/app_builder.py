@@ -20,8 +20,9 @@ def build_app(
     image_tag: str | None = None,
     account: str | None = None,
     nag: bool = True,
+    synth_check: bool = False,
 ) -> dict[str, cdk.Stack]:
-    cfg: AppConfig = load(config_path)
+    cfg: AppConfig = load(config_path, synth_check=synth_check)
     # Account stays a CloudFormation token so no account ID ends up in templates or nag output.
     env = cdk.Environment(account=account, region=cfg.region)
     stacks: dict[str, cdk.Stack] = {}

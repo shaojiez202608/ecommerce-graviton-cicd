@@ -203,7 +203,7 @@ class PlatformStack(Stack):
             parameter_group=params,
             multi_az=env_cfg.db_multi_az,
             storage_encrypted=True,
-            allocated_storage=20,
+            allocated_storage=env_cfg.db_allocated_storage_gib,
             storage_type=rds.StorageType.GP3,
             backup_retention=Duration.days(1 if app_cfg.destroy_on_delete else 7),
             delete_automated_backups=app_cfg.destroy_on_delete,
@@ -271,7 +271,7 @@ class PlatformStack(Stack):
             ),
             zone_awareness=opensearch.ZoneAwarenessConfig(enabled=zone_aware, availability_zone_count=2)
             if zone_aware else opensearch.ZoneAwarenessConfig(enabled=False),
-            ebs=opensearch.EbsOptions(volume_size=20, volume_type=ec2.EbsDeviceVolumeType.GP3),
+            ebs=opensearch.EbsOptions(volume_size=env_cfg.search_volume_gib, volume_type=ec2.EbsDeviceVolumeType.GP3),
             encryption_at_rest=opensearch.EncryptionAtRestOptions(enabled=True),
             node_to_node_encryption=True,
             enforce_https=True,
@@ -431,6 +431,7 @@ class PlatformStack(Stack):
             )
 
         self.blue_tg = tg("BlueTg")
+        self.green_tg: elbv2.ApplicationTargetGroup | None = None
         prod_rule = elbv2.ApplicationListenerRule(
             self, "ProdRule", listener=self.listener, priority=10,
             conditions=[elbv2.ListenerCondition.path_patterns(["/*"])],
@@ -459,7 +460,8 @@ class PlatformStack(Stack):
             health_check_grace_period=Duration.seconds(120),
             platform_version=ecs.FargatePlatformVersion.LATEST,
             **(
-                {"deployment_strategy": ecs.DeploymentStrategy.BLUE_GREEN, "bake_time": Duration.minutes(10)}
+                {"deployment_strategy": ecs.DeploymentStrategy.BLUE_GREEN,
+                 "bake_time": Duration.minutes(env_cfg.bake_time_minutes)}
                 if env_cfg.deployment == "blue_green" else {}
             ),
         )
@@ -533,21 +535,32 @@ class PlatformStack(Stack):
             a.add_alarm_action(action)
             return a
 
+        t = self.env_cfg.alarms
         alarm("Alb5xx", self.alb.metrics.http_code_target(elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
-                                                          period=Duration.minutes(1)), 10,
+                                                          period=Duration.minutes(1)), t.alb_target_5xx_per_minute,
               "Magento returned 5xx responses")
-        alarm("UnhealthyTargets", self.blue_tg.metrics.unhealthy_host_count(period=Duration.minutes(1)), 1,
-              "ALB has unhealthy Magento targets")
-        alarm("EcsCpuHigh", self.service.metric_cpu_utilization(period=Duration.minutes(5)), 85, "ECS CPU high")
-        alarm("EcsMemHigh", self.service.metric_memory_utilization(period=Duration.minutes(5)), 85, "ECS memory high")
-        alarm("DbCpuHigh", self.db.metric_cpu_utilization(period=Duration.minutes(5)), 85, "RDS CPU high")
-        alarm("DbStorageLow", self.db.metric_free_storage_space(period=Duration.minutes(5)), 2 * 1024**3,
+        # One alarm per target group: with blue/green the active group alternates between deployments.
+        for cid, group in (("UnhealthyTargets", self.blue_tg), ("UnhealthyTargetsGreen", self.green_tg)):
+            if group is not None:
+                # Explicit dimensions: the green group is attached by ECS, not by a CDK listener.
+                metric = cw.Metric(namespace="AWS/ApplicationELB", metric_name="UnHealthyHostCount",
+                                   dimensions_map={"TargetGroup": group.target_group_full_name,
+                                                   "LoadBalancer": self.alb.load_balancer_full_name},
+                                   period=Duration.minutes(1), statistic="Maximum")
+                alarm(cid, metric, 1, f"ALB has unhealthy Magento targets ({group.node.id})")
+        alarm("EcsCpuHigh", self.service.metric_cpu_utilization(period=Duration.minutes(5)), t.cpu_percent,
+              "ECS CPU high")
+        alarm("EcsMemHigh", self.service.metric_memory_utilization(period=Duration.minutes(5)), t.memory_percent,
+              "ECS memory high")
+        alarm("DbCpuHigh", self.db.metric_cpu_utilization(period=Duration.minutes(5)), t.cpu_percent, "RDS CPU high")
+        alarm("DbStorageLow", self.db.metric_free_storage_space(period=Duration.minutes(5)),
+              t.db_free_storage_gib * 1024**3,
               "RDS free storage low", cmp=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD)
         alarm("SearchRed", self.search.metric_cluster_status_red(period=Duration.minutes(1)), 1,
               "OpenSearch cluster status red", periods=1)
         alarm("CacheCpuHigh", cw.Metric(namespace="AWS/ElastiCache", metric_name="EngineCPUUtilization",
                                         dimensions_map={"ReplicationGroupId": self.cache.ref},
-                                        period=Duration.minutes(5), statistic="Average"), 85,
+                                        period=Duration.minutes(5), statistic="Average"), t.cpu_percent,
               "Valkey engine CPU high")
 
     def _deploy_project(self, n, app_subnets, log_retention, removal) -> codebuild.Project:

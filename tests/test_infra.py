@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def synth(profile: str, image_tag=None, nag=True):
     app = cdk.App(context={"@aws-cdk/customresources:installLatestAwsSdkDefault": False})
-    stacks = build_app(app, config_path=str(ROOT / "config" / f"{profile}.json"), image_tag=image_tag, nag=nag)
+    stacks = build_app(app, config_path=str(ROOT / "config" / f"{profile}.json"), image_tag=image_tag, nag=nag,
+                       synth_check=(profile == "customer"))
     return app, {name: Template.from_stack(s) for name, s in stacks.items()}
 
 
@@ -200,3 +201,18 @@ def test_snapshot_name_and_iam_grant_share_the_configured_prefix():
     assert '\\"snapshotPrefix\\":\\"proto-ecom-uat-predeploy\\"' in t
     assert ":snapshot:proto-ecom-uat-predeploy-*" in t
     assert '\\"namePrefix\\":\\"proto-ecom-uat\\"' in t
+
+
+def test_unhealthy_target_alarm_covers_both_blue_green_groups(customer):
+    def unhealthy(env):
+        alarms = customer[f"proto-ecom-{env}-platform"].find_resources("AWS::CloudWatch::Alarm")
+        return [a for a in alarms.values() if a["Properties"].get("MetricName") == "UnHealthyHostCount"]
+    assert len(unhealthy("prod")) == 2 and len(unhealthy("dev")) == 1
+
+
+def test_storage_and_bake_time_come_from_the_profile(customer):
+    prod = customer["proto-ecom-prod-platform"]
+    prod.has_resource_properties("AWS::RDS::DBInstance", {"AllocatedStorage": "20"})
+    prod.has_resource_properties("AWS::OpenSearchService::Domain", {"EBSOptions": Match.object_like({"VolumeSize": 20})})
+    prod.has_resource_properties("AWS::ECS::Service", {"DeploymentConfiguration": Match.object_like(
+        {"BakeTimeInMinutes": 10})})

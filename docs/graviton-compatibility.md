@@ -10,9 +10,9 @@
 | G-04 | Composer 2 | `public.ecr.aws/docker/library/composer:2`（只取 `/usr/bin/composer`，PHP 脚本） | 官方镜像提供 arm64v8（F-23） | 已运行：`composer install --no-dev` 成功 |
 | G-05 | nginx | Debian bookworm `nginx-light` 包 | Debian arm64 官方仓库包；基础镜像为 arm64 | 已运行：ALB 健康检查与首页 200 |
 | G-06 | Magento Open Source 2.4.8 代码与 Composer 依赖 | 从官方 Git 仓库构建 | 纯 PHP；Adobe 系统要求页未声明 CPU 架构（F-02）。若加入含原生扩展的第三方模块，需逐个确认 | 已运行：2.4.8-p5 在 arm64 上完成 `setup:di:compile`、`setup:static-content:deploy`、`setup:install`，首页 200 |
-| G-07 | 数据库：RDS for MySQL 8.4 | Graviton 实例族（`config` 中 `db.*g.*` 占位值） | RDS 支持 Graviton 实例（F-04）；MySQL 8.4 可选 Graviton 实例族（F-15）；Magento 2.4.8 要求 MySQL 8.4（F-02） | 见 DEPLOYMENT-LOG |
-| G-08 | 缓存/会话：ElastiCache for Valkey 8.1 | `cache.*g.*` 节点、TLS + AUTH | Valkey 当前代节点包含 Graviton 实例族（F-15） | 已运行：Graviton 节点，`tls://` + AUTH 下会话/缓存/整页缓存可用，`cache:flush` 成功 |
-| G-09 | 搜索：Amazon OpenSearch Service 3.1 | `*.search` Graviton 实例（占位） | 服务支持 Graviton 实例（F-04）；3.x 可选 Graviton 实例族（F-15）；2.4.8 要求 OpenSearch 3（F-02） | 已运行：Graviton 实例 + OpenSearch 3.1 + FGAC，`setup:install` 的搜索引擎校验通过 |
+| G-07 | 数据库：RDS for MySQL 8.4 | Graviton 实例族（交付配置留空必填；沙箱值只在 `config/sandbox.json`） | RDS 支持 Graviton 实例（F-04）；MySQL 8.4 可选 Graviton 实例族（F-15）；Magento 2.4.8 要求 MySQL 8.4（F-02） | 已运行：Graviton 实例族上 `setup:install`/`setup:upgrade` 成功（DEPLOYMENT-LOG） |
+| G-08 | 缓存/会话：ElastiCache for Valkey 8.1 | Graviton 节点类型、TLS + AUTH | Valkey 可选 Graviton 节点族（F-15） | 已运行：Graviton 节点上 `tls://` + AUTH 的会话/缓存/整页缓存可用，`cache:flush` 成功 |
+| G-09 | 搜索：Amazon OpenSearch Service 3.1 | `.search` Graviton 实例族 | 服务支持 Graviton 实例（F-04）；3.x 可选 Graviton 实例族（F-15）；2.4.8 要求 OpenSearch 3（F-02） | 已运行：Graviton 实例 + OpenSearch 3.1 + FGAC，`setup:install` 的搜索引擎校验通过 |
 | G-10 | 构建：CodeBuild | `ARM_CONTAINER` + `aws/codebuild/amazonlinux-aarch64-standard:3.0`，特权模式 docker build | F-07、F-08 | 已运行：构建日志 `arch=aarch64`；VPC 内部署项目同样为 ARM |
 | G-11 | 函数：Lambda（MCF 桥接） | `python3.14`、`arm64`，仅用标准库 + 运行时自带 boto3 | 所有受支持运行时都支持 arm64（F-06） | 已运行：三个函数端到端（VERIFICATION §4） |
 | G-12 | 镜像仓库：ECR | 单架构 arm64 镜像 | ECR 支持多架构清单（F-04）；本原型只推 arm64 | 已运行：推送/拉取正常 |

@@ -19,8 +19,35 @@ def write(tmp_path, mutate):
 
 
 def test_profiles_load():
-    assert set(load(ROOT / "config" / "customer.json").environments) == {"dev", "test", "uat", "prod"}
+    customer = load(ROOT / "config" / "customer.json", synth_check=True)
+    assert set(customer.environments) == {"dev", "test", "uat", "prod"}
     assert load(ROOT / "config" / "sandbox.json").destroy_on_delete
+
+
+def test_customer_profile_requires_sizing_to_be_filled_in():
+    with pytest.raises(ValueError, match="db_instance_class, cache_node_type, search_instance_type not set"):
+        load(ROOT / "config" / "customer.json")
+    raw = json.loads((ROOT / "config" / "customer.json").read_text())
+    for env in raw["environments"].values():
+        assert env["db_instance_class"] == env["cache_node_type"] == env["search_instance_type"] == ""
+
+
+def test_no_instance_type_names_outside_the_sandbox_profile():
+    """Instance classes live only in config/sandbox.json (deployable sandbox values)."""
+    pattern = re.compile(r"\b(?:db\.|cache\.)?[cmrtix]\d+g[dn]*\b")  # instance family tokens
+    for path in ROOT.rglob("*"):
+        if (not path.is_file() or path.suffix not in (".py", ".json", ".md", ".sh", ".yml", ".php")
+                or any(part in {".venv", "cdk.out", "node_modules", ".git"} for part in path.parts)
+                or path.name == "sandbox.json"):
+            continue
+        assert not pattern.search(path.read_text()), path
+
+
+def test_sizing_and_thresholds_come_from_the_profile():
+    cfg = load(ROOT / "config" / "sandbox.json")
+    dev = cfg.environments["dev"]
+    assert dev.db_allocated_storage_gib > 0 and dev.search_volume_gib > 0
+    assert dev.alarms.cpu_percent > 0 and dev.mcf.lambda_memory_mib > 0
 
 
 @pytest.mark.parametrize("mutate,match", [
@@ -29,6 +56,10 @@ def test_profiles_load():
     (lambda r: r["pipelines"][0].update(environments=["prod"]), "undefined environments"),
     (lambda r: r["environments"]["dev"]["mcf"].update(spapi_mode="real"), "spapi_mode"),
     (lambda r: r["environments"]["dev"].update(deployment="canary"), "deployment"),
+    (lambda r: r["environments"]["dev"].update(db_instance_class=""), "not set"),
+    (lambda r: r["environments"]["dev"].update(base_url_scheme="https"), "needs certificate_arn and site_hostname"),
+    (lambda r: r["environments"]["dev"].update(maintenance_on_failure="maybe"), "maintenance_on_failure"),
+    (lambda r: r["environments"]["dev"]["mcf"]["marketplaces"].update(DE={"id": "X"}), "region"),
 ])
 def test_invalid_config_rejected(tmp_path, mutate, match):
     with pytest.raises(ValueError, match=match):

@@ -1,5 +1,5 @@
 {
-  "_comment": "Sandbox profile: one environment (dev) + pipeline + MCF bridge in mock mode. Instance classes below are placeholders for a short-lived test deployment, not sizing advice; pick families/sizes from the official pages linked in docs/deployment-guide.md.",
+  "_comment": "Sandbox profile: one environment (dev) + pipeline + MCF bridge in mock mode, destroyable. The instance classes here exist only so the sandbox can be deployed for a short test; they are not sizing advice. Check availability and choose classes on the official pages listed in docs/deployment-guide.md.",
   "project": "proto-ecom",
   "region": "us-east-1",
   "removal_policy": "destroy",
@@ -40,29 +40,44 @@
       "desired_count": 1,
       "task_cpu": 1024,
       "task_memory_mib": 4096,
-      "db_instance_class": "<DB_INSTANCE_CLASS>",
+      "db_instance_class": "m8g.large",
       "db_engine_version": "8.4.11",
       "db_multi_az": false,
-      "cache_node_type": "<CACHE_NODE_TYPE>",
+      "db_allocated_storage_gib": 20,
+      "cache_node_type": "cache.m8g.large",
       "cache_engine_version": "8.1",
-      "search_instance_type": "<SEARCH_INSTANCE_TYPE>",
+      "search_instance_type": "m8g.medium.search",
       "search_engine_version": "OpenSearch_3.1",
       "search_data_nodes": 1,
+      "search_volume_gib": 20,
       "allowed_ingress_cidrs": [],
       "snapshot_before_migrate": false,
+      "predeploy_snapshots_keep": 3,
       "base_url_scheme": "http",
+      "maintenance_on_failure": "disable",
+      "alarms": {
+        "cpu_percent": 85,
+        "memory_percent": 85,
+        "db_free_storage_gib": 2,
+        "alb_target_5xx_per_minute": 10
+      },
       "mcf": {
         "enabled": true,
         "spapi_mode": "mock",
-        "spapi_region": "na",
         "marketplaces": {
-          "US": "ATVPDKIKX0DER"
+          "US": {
+            "id": "ATVPDKIKX0DER",
+            "region": "na"
+          }
         },
         "fulfillment_policy": "FillOrKill",
         "max_attempts": 3,
         "tracking_poll_minutes": 5,
         "inventory_sync_minutes": 60,
-        "mock_ship_after_seconds": 60
+        "mock_ship_after_seconds": 60,
+        "lambda_memory_mib": 256,
+        "intake_batch_size": 1,
+        "spapi_http_timeout_seconds": 20
       }
     }
   }

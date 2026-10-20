@@ -77,7 +77,7 @@ class McfStack(Stack):
         )
         self.queue = sqs.Queue(
             self, "IntakeQueue", queue_name=n("mcf-intake"),
-            visibility_timeout=Duration.seconds(180),
+            visibility_timeout=Duration.seconds(mcf.intake_visibility_timeout_seconds),
             encryption=sqs.QueueEncryption.SQS_MANAGED, enforce_ssl=True,
             dead_letter_queue=sqs.DeadLetterQueue(queue=dlq, max_receive_count=mcf.max_attempts),
             removal_policy=removal,
@@ -106,9 +106,9 @@ class McfStack(Stack):
             "TABLE_NAME": self.table.table_name,
             "EVENT_BUS_NAME": self.bus.event_bus_name,
             "SPAPI_MODE": mcf.spapi_mode,
-            "SPAPI_REGION": mcf.spapi_region,
+            "SPAPI_REGION": mcf.regions[0],
             "SPAPI_SECRET_ARN": self.secret.secret_arn,
-            "MARKETPLACE_IDS": json.dumps(mcf.marketplaces),
+            "MARKETPLACE_IDS": json.dumps({k: m.marketplace_id for k, m in mcf.marketplaces.items()}),
             "FULFILLMENT_POLICY": mcf.fulfillment_policy,
             "MAX_ATTEMPTS": str(mcf.max_attempts),
             "MOCK_SHIP_AFTER_SECONDS": str(mcf.mock_ship_after_seconds),
@@ -124,7 +124,7 @@ class McfStack(Stack):
                 handler=f"mcf_bridge.handlers.{handler}",
                 code=lambda_.Code.from_asset(str(SRC), exclude=["**/__pycache__", "**/*.pyc"]),
                 timeout=Duration.seconds(timeout),
-                memory_size=256,
+                memory_size=mcf.lambda_memory_mib,
                 environment=env_vars,
                 log_group=lg,
             )
@@ -134,9 +134,10 @@ class McfStack(Stack):
                 self.secret.grant_read(f)
             return f
 
-        self.intake = fn("IntakeFn", "mcf-intake", "order_intake", 30)
+        # Timeout covers the worst case of every message in a batch (see McfConfig.intake_timeout_seconds).
+        self.intake = fn("IntakeFn", "mcf-intake", "order_intake", mcf.intake_timeout_seconds)
         self.intake.add_event_source(sources.SqsEventSource(
-            self.queue, batch_size=5, report_batch_item_failures=True, max_concurrency=2,
+            self.queue, batch_size=mcf.intake_batch_size, report_batch_item_failures=True, max_concurrency=2,
         ))
         self.tracking = fn("TrackingFn", "mcf-tracking", "tracking_poller", 120)
         self.inventory = fn("InventoryFn", "mcf-inventory", "inventory_sync", 300)
