@@ -408,6 +408,7 @@ class PlatformStack(Stack):
         # One-off task for setup:install / setup:upgrade and cache:flush (command chosen at run time).
         self.ops_td = task_definition("OpsTask", n("ops"), env_cfg.task_cpu, env_cfg.task_memory_mib,
                                       ["/usr/local/bin/magento-migrate"])
+        self._lock_secrets()
 
         # ------------------------------------------------------------------ ALB (internal only)
         alb_logs = s3.Bucket(
@@ -559,6 +560,28 @@ class PlatformStack(Stack):
         )
 
     # ---------------------------------------------------------------------- helpers
+    def _lock_secrets(self) -> None:
+        """Resource policies: only the task execution roles that inject a secret (and the CDK
+        CloudFormation execution role, for secrets CloudFormation resolves as dynamic references)
+        may read it; every other principal is explicitly denied, including administrators."""
+        stack = Stack.of(self)
+        cfn_exec = f"arn:{stack.partition}:iam::{stack.account}:role/cdk-*-cfn-exec-role-*"
+        web, ops = self.web_td.obtain_execution_role().role_arn, self.ops_td.obtain_execution_role().role_arn
+        readers = {
+            self.db_secret: [ops, cfn_exec],  # master user: migration task + RDS dynamic reference
+            self.db_app_secret: [web, ops],
+            self.app_secret: [ops],
+            self.crypt_secret: [web, ops],
+            self.search_secret: [web, ops, cfn_exec],  # OpenSearch master password dynamic reference
+            self.cache_secret: [web, ops, cfn_exec],  # Valkey AUTH token dynamic reference
+        }
+        for secret, allowed in readers.items():
+            secret.add_to_resource_policy(iam.PolicyStatement(
+                sid="DenyReadExceptConsumers", effect=iam.Effect.DENY, principals=[iam.AnyPrincipal()],
+                actions=["secretsmanager:GetSecretValue"], resources=["*"],
+                conditions={"StringNotLike": {"aws:PrincipalArn": allowed}},
+            ))
+
     def _alarms(self) -> None:
         action = cw_actions.SnsAction(self.alarm_topic)
 

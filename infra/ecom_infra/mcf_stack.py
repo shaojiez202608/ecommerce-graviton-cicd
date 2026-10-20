@@ -13,6 +13,7 @@ from aws_cdk import aws_cloudwatch_actions as cw_actions
 from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as sources
 from aws_cdk import aws_logs as logs
@@ -144,6 +145,14 @@ class McfStack(Stack):
         ))
         self.tracking = fn("TrackingFn", "mcf-tracking", "tracking_poller", 300)
         self.inventory = fn("InventoryFn", "mcf-inventory", "inventory_sync", 300)
+        # Only the bridge functions may ever read the SP-API credentials (they are granted read
+        # access only in live mode); everyone else, administrators included, is denied.
+        self.secret.add_to_resource_policy(iam.PolicyStatement(
+            sid="DenyReadExceptBridge", effect=iam.Effect.DENY, principals=[iam.AnyPrincipal()],
+            actions=["secretsmanager:GetSecretValue"], resources=["*"],
+            conditions={"StringNotLike": {"aws:PrincipalArn": [
+                f.role.role_arn for f in (self.intake, self.tracking, self.inventory)]}},
+        ))
         events.Rule(self, "TrackingSchedule",
                     schedule=events.Schedule.rate(Duration.minutes(mcf.tracking_poll_minutes)),
                     targets=[targets.LambdaFunction(self.tracking)])

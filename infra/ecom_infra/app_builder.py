@@ -10,6 +10,7 @@ from .config import AppConfig, load
 from .mcf_stack import McfStack
 from .nag import apply_suppressions
 from .platform_stack import PlatformStack
+from .trust import apply_trust_conditions
 
 
 def build_app(
@@ -50,6 +51,7 @@ def build_app(
     for key, value in cfg.tags.items():
         cdk.Tags.of(app).add(key, value)
     for stack in stacks.values():
+        apply_trust_conditions(stack, cfg)
         env_name = getattr(stack, "env_name", None)
         apply_suppressions(stack, cfg, cfg.environments[env_name] if env_name else None)
     if nag:

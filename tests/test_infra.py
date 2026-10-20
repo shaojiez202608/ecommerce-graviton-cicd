@@ -353,3 +353,31 @@ def test_nag_acknowledgements_are_attached_to_specific_constructs():
             acknowledgements(stacks["proto-ecom-dev-mcf"], cfg, cfg.environments["dev"])
     finally:
         nag.BY_KIND["mcf"] = orig
+
+
+def test_service_role_trust_policies_carry_source_account_and_arn(customer):
+    expect = {"codebuild.amazonaws.com": ":codebuild:", "vpc-flow-logs.amazonaws.com": ":vpc-flow-log/",
+              "events.amazonaws.com": ":rule/", "ecs-tasks.amazonaws.com": ":ecs:"}
+    seen = set()
+    for name, t in customer.items():
+        for lid, role in t.find_resources("AWS::IAM::Role").items():
+            for st in role["Properties"]["AssumeRolePolicyDocument"]["Statement"]:
+                svc = (st.get("Principal") or {}).get("Service")
+                if svc not in expect or (svc == "ecs-tasks.amazonaws.com" and "TaskRole" not in lid):
+                    continue
+                cond = st.get("Condition", {})
+                assert "aws:SourceAccount" in cond.get("StringEquals", {}), (name, lid)
+                assert expect[svc] in json.dumps(cond["ArnLike"]["aws:SourceArn"]), (name, lid)
+                seen.add(svc)
+    assert seen == set(expect)
+
+
+def test_secrets_deny_reads_except_their_consumers(sandbox):
+    for name in ("proto-ecom-dev-platform", "proto-ecom-dev-mcf"):
+        policies = sandbox[name].find_resources("AWS::SecretsManager::ResourcePolicy")
+        secrets = sandbox[name].find_resources("AWS::SecretsManager::Secret")
+        assert len(policies) == len(secrets)
+        for pol in policies.values():
+            st = pol["Properties"]["ResourcePolicy"]["Statement"][0]
+            assert st["Effect"] == "Deny" and st["Action"] == "secretsmanager:GetSecretValue"
+            assert st["Condition"]["StringNotLike"]["aws:PrincipalArn"]
