@@ -33,12 +33,15 @@ echo "[destroy] 1. cdk destroy"
 (cd "$ROOT" && npx -y aws-cdk@2 destroy --all -c config="$ECOM_CONFIG" --force) || warn "cdk destroy reported errors; continuing"
 
 echo "[destroy] 2. task definition revisions registered by the deploy script"
-for arn in $(aws ecs list-task-definitions --family-prefix "$P" --status ACTIVE --query 'taskDefinitionArns' --output text); do
-  aws ecs deregister-task-definition --task-definition "$arn" >/dev/null || warn "deregister ${arn##*/}"
-done
-inactive=$(aws ecs list-task-definitions --family-prefix "$P" --status INACTIVE --query 'taskDefinitionArns' --output text)
-for arn in $inactive; do
-  aws ecs delete-task-definitions --task-definitions "$arn" >/dev/null || warn "delete ${arn##*/}"
+# list-task-definitions --family-prefix takes a full family name, so enumerate the families first.
+families=$(aws ecs list-task-definition-families --family-prefix "$P" --status ALL --query families --output text)
+for fam in $families; do
+  for arn in $(aws ecs list-task-definitions --family-prefix "$fam" --status ACTIVE --query 'taskDefinitionArns' --output text); do
+    aws ecs deregister-task-definition --task-definition "$arn" >/dev/null || warn "deregister ${arn##*/}"
+  done
+  for arn in $(aws ecs list-task-definitions --family-prefix "$fam" --status INACTIVE --query 'taskDefinitionArns' --output text); do
+    aws ecs delete-task-definitions --task-definitions "$arn" >/dev/null || warn "delete ${arn##*/}"
+  done
 done
 
 echo "[destroy] 3. log groups created outside the stacks"

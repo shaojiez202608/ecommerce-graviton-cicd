@@ -108,9 +108,14 @@ class Checker:
         active = [c["clusterName"] for c in (ecs.describe_clusters(clusters=clusters)["clusters"] if clusters else [])
                   if c["status"] != "INACTIVE"]
         self.report("ecs clusters (not INACTIVE)", active)
-        tds = self.pages("ecs", "list_task_definitions", "taskDefinitionArns", familyPrefix=p, status="ACTIVE")
+        # list_task_definitions' familyPrefix is a full family name; enumerate families first.
+        families = self.pages("ecs", "list_task_definition_families", "families", familyPrefix=p, status="ALL")
+        tds, inactive = [], []
+        for fam in families:
+            tds += self.pages("ecs", "list_task_definitions", "taskDefinitionArns", familyPrefix=fam, status="ACTIVE")
+            inactive += self.pages("ecs", "list_task_definitions", "taskDefinitionArns", familyPrefix=fam,
+                                   status="INACTIVE")
         self.report("ecs task definitions (ACTIVE)", [a.rsplit("/", 1)[-1] for a in tds])
-        inactive = self.pages("ecs", "list_task_definitions", "taskDefinitionArns", familyPrefix=p, status="INACTIVE")
         self.report("ecs task definitions (INACTIVE)", [a.rsplit("/", 1)[-1] for a in inactive])
         ec2 = self.c("ec2")
         tagf = [{"Name": "tag:Project", "Values": [self.tag]}]
