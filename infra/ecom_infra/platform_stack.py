@@ -247,7 +247,7 @@ class PlatformStack(Stack):
             port=REDIS_PORT,
             snapshot_retention_limit=0 if app_cfg.destroy_on_delete else 1,
         )
-        self.cache.add_dependency(cache_subnets)
+        self.cache.node.add_dependency(cache_subnets)
         self.cache.apply_removal_policy(removal)
 
         # ------------------------------------------------------------------ search (OpenSearch)
@@ -429,7 +429,7 @@ class PlatformStack(Stack):
             self.listener = self.alb.add_listener(
                 "Https", port=443, protocol=elbv2.ApplicationProtocol.HTTPS, open=False,
                 certificates=[elbv2.ListenerCertificate.from_arn(cert_arn)],
-                ssl_policy=elbv2.SslPolicy.RECOMMENDED_TLS,
+                ssl_policy=elbv2.SslPolicy.TLS13_12_RES_PQ,  # ELB-recommended post-quantum TLS 1.3/1.2 policy
                 default_action=elbv2.ListenerAction.fixed_response(404),
             )
             self.alb.add_listener("HttpRedirect", port=80, open=False, default_action=elbv2.ListenerAction.redirect(

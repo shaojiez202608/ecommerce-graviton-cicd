@@ -223,7 +223,7 @@ def test_https_environments_listen_on_443_with_the_configured_certificate(sandbo
         t = customer[f"proto-ecom-{env}-platform"]
         t.has_resource_properties("AWS::ElasticLoadBalancingV2::Listener", {
             "Port": 443, "Protocol": "HTTPS", "Certificates": Match.any_value(),
-            "SslPolicy": Match.string_like_regexp("TLS13")})
+            "SslPolicy": "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09"})
         t.has_resource_properties("AWS::ElasticLoadBalancingV2::Listener", {
             "Port": 80, "DefaultActions": [Match.object_like({"Type": "redirect"})]})
         rule = next(iter(t.find_resources("AWS::ElasticLoadBalancingV2::ListenerRule").values()))
