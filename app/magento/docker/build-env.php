@@ -40,15 +40,18 @@ switch ($command) {
         break;
 
     case 'write-stub':
-        // Build-time env.php. With $b === 'nodb' the 'db' section is omitted, so static content
-        // deploy cannot fall back to the database for theme/scope data and must use config.php.
+        // Build-time env.php. Magento only reads scopes/themes from config.php when the
+        // deployment is neither "installed" (install date) nor has a database configured
+        // (Magento\Store\App\Config\Source\InitialConfigSource). So:
+        //   default -> placeholder db + install date, for deploy:mode:set and setup:di:compile
+        //   nodb    -> neither, for setup:static-content:deploy
         $stub = [
             'MAGE_MODE' => 'production',
-            'install' => ['date' => 'Thu, 01 Jan 2026 00:00:00 +0000'],
             'crypt' => ['key' => 'build-time-placeholder-not-used-at-runtime'],
             'backend' => ['frontName' => 'admin'],
         ];
         if ($b !== 'nodb') {
+            $stub['install'] = ['date' => 'Thu, 01 Jan 2026 00:00:00 +0000'];
             $stub['db'] = ['table_prefix' => '', 'connection' => ['default' => [
                 'host' => 'build-placeholder', 'dbname' => 'none', 'username' => 'none', 'password' => '',
                 'model' => 'mysql4', 'engine' => 'innodb', 'initStatements' => 'SET NAMES utf8;', 'active' => '1',
