@@ -9,6 +9,18 @@ set -eu
 cd /var/www/magento
 php /usr/local/lib/magento/env-tool.php render app/etc/env.php
 
+# Ensure the least-privilege application user exists (master credentials are only in this task).
+php -r '
+$o = [PDO::MYSQL_ATTR_SSL_CA => "/etc/ssl/certs/rds-global-bundle.pem", PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION];
+$p = new PDO("mysql:host=" . getenv("MAGENTO_DB_HOST"), getenv("MAGENTO_DB_MASTER_USER"), getenv("MAGENTO_DB_MASTER_PASSWORD"), $o);
+$db = str_replace("`", "", getenv("MAGENTO_DB_NAME"));
+$u = $p->quote(getenv("MAGENTO_DB_USER")); $pw = $p->quote(getenv("MAGENTO_DB_PASSWORD"));
+$p->exec("CREATE DATABASE IF NOT EXISTS `$db`");
+$p->exec("CREATE USER IF NOT EXISTS $u@\"%\" IDENTIFIED BY $pw");
+$p->exec("ALTER USER $u@\"%\" IDENTIFIED BY $pw");
+$p->exec("GRANT ALL PRIVILEGES ON `$db`.* TO $u@\"%\"");
+echo "[migrate] application database user ready\n";'
+
 installed=$(php -r '
 $e = require "app/etc/env.php"; $c = $e["db"]["connection"]["default"];
 $o = [PDO::MYSQL_ATTR_SSL_CA => "/etc/ssl/certs/rds-global-bundle.pem"];

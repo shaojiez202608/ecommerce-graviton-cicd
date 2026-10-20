@@ -184,3 +184,4 @@ def test_secrets_injected_not_plain_env(sandbox):
     assert {"MAGENTO_DB_PASSWORD", "MAGENTO_CRYPT_KEY", "MAGENTO_OPENSEARCH_PASSWORD", "MAGENTO_BASE_URL"} <= secret_names
     assert not any("PASSWORD" in n or "KEY" in n for n in env_names)
     assert "MAGENTO_ADMIN_PASSWORD" not in secret_names  # only the one-off ops task gets admin creds
+    assert "MAGENTO_DB_MASTER_PASSWORD" not in secret_names  # web tasks use the app user only

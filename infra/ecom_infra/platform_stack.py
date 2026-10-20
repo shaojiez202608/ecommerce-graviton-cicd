@@ -130,6 +130,17 @@ class PlatformStack(Stack):
 
         # ------------------------------------------------------------------ secrets
         self.db_secret = rds.DatabaseSecret(self, "DbSecret", username="magento", secret_name=n("db"))
+        # Application DB user with explicit grants on the Magento schema only. The migration task
+        # creates/updates it with the master credentials; web tasks never see the master secret.
+        self.db_app_secret = sm.Secret(
+            self, "DbAppSecret", secret_name=n("db-app"),
+            description="Magento application database user (least privilege on the magento schema)",
+            generate_secret_string=sm.SecretStringGenerator(
+                secret_string_template=json.dumps({"username": "magento_app"}),
+                generate_string_key="password", exclude_punctuation=True, password_length=32,
+            ),
+            removal_policy=removal,
+        )
         self.app_secret = sm.Secret(
             self,
             "AppSecret",
@@ -360,8 +371,8 @@ class PlatformStack(Stack):
                     "MAGENTO_CACHE_PREFIX": f"{env}_",
                 },
                 secrets={
-                    "MAGENTO_DB_USER": ecs.Secret.from_secrets_manager(self.db_secret, "username"),
-                    "MAGENTO_DB_PASSWORD": ecs.Secret.from_secrets_manager(self.db_secret, "password"),
+                    "MAGENTO_DB_USER": ecs.Secret.from_secrets_manager(self.db_app_secret, "username"),
+                    "MAGENTO_DB_PASSWORD": ecs.Secret.from_secrets_manager(self.db_app_secret, "password"),
                     "MAGENTO_CRYPT_KEY": ecs.Secret.from_secrets_manager(self.crypt_secret),
                     "MAGENTO_OPENSEARCH_USER": ecs.Secret.from_secrets_manager(self.search_secret, "username"),
                     "MAGENTO_OPENSEARCH_PASSWORD": ecs.Secret.from_secrets_manager(self.search_secret, "password"),
@@ -370,6 +381,8 @@ class PlatformStack(Stack):
                     "MAGENTO_ADMIN_FRONTNAME": ecs.Secret.from_ssm_parameter(ssm_admin),
                     **(
                         {
+                            "MAGENTO_DB_MASTER_USER": ecs.Secret.from_secrets_manager(self.db_secret, "username"),
+                            "MAGENTO_DB_MASTER_PASSWORD": ecs.Secret.from_secrets_manager(self.db_secret, "password"),
                             "MAGENTO_ADMIN_USER": ecs.Secret.from_secrets_manager(self.app_secret, "admin_user"),
                             "MAGENTO_ADMIN_PASSWORD": ecs.Secret.from_secrets_manager(self.app_secret, "admin_password"),
                         }
