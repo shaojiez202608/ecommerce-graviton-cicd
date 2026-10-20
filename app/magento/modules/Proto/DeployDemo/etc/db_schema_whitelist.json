@@ -2,7 +2,8 @@
     "proto_deploy_demo": {
         "column": {
             "entity_id": true,
-            "release_tag": true
+            "release_tag": true,
+            "note": true
         },
         "constraint": {
             "PRIMARY": true

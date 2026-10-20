@@ -3,6 +3,7 @@
     <table name="proto_deploy_demo" resource="default" engine="innodb" comment="Deployment demo: schema change marker">
         <column xsi:type="int" name="entity_id" unsigned="true" nullable="false" identity="true" comment="Entity ID"/>
         <column xsi:type="varchar" name="release_tag" nullable="false" length="64" comment="Release that created the row"/>
+        <column xsi:type="varchar" name="note" nullable="true" length="255" comment="Added in a later release (schema change demo)"/>
         <constraint xsi:type="primary" referenceId="PRIMARY">
             <column name="entity_id"/>
         </constraint>
