@@ -5,7 +5,7 @@
 | # | 检查项 | 初评 | 证据（最终） | 处理结果 / 最终 |
 |---|---|---|---|---|
 | A1 | README 第一屏免责声明（非生产、使用方负责、找安全和法务评估）并链接加固清单 | 需修改（只有「Prototype — not for production」一句） | `README.md:3-8`、`README.zh-CN.md:3-6` | 已改：三要点 + 责任共担模型链接 + 加固清单链接。**满足** |
-| A2 | grep 客户名、人名、域名、12 位数字、个人 profile 名、`[INSERT` 残留为 0 | 满足（12 位数字 0；无 profile 名） | `git grep -nE '\b[0-9]{12}\b'` 除占位值 `111122223333` 外为 0；`git grep -n '\[INSERT'` 为空；历史扫描见 VERIFICATION §5 | **满足** |
+| A2 | grep 客户名、人名、域名、12 位数字、个人 profile 名、`[INSERT` 残留为 0 | 满足（12 位数字 0；无 profile 名） | `git grep -nE '\b[0-9]{12}\b'` 除占位值 `111122223333` 与脱敏测试的输入样例（`tests/test_ops_scripts.py`，AWS 文档示例号 `123456789012`）外为 0；`git grep -n '\[INSERT'` 为空；历史扫描见 VERIFICATION §5 | **满足** |
 | A3 | 占位符统一 `<UPPER_SNAKE>`、`example.com`、`111122223333`；截图有来源记录；数据合成 | 需修改（`<ACCOUNT_ID>`、小写 `<env>` 等） | 全仓替换；`sample-data/` 合成数据；仓库无截图 | 已改。截图：不适用（无截图）。**满足** |
 | B1 | LICENSE（含版权行）、SECURITY（完整写法）、CoC、CONTRIBUTING（测试、提交规范、不能提交账号 ID） | 需修改（版权行、CoC、SECURITY 写法不符） | `LICENSE:3`、`SECURITY.md`、`CODE_OF_CONDUCT.md`、`CONTRIBUTING.md` | 已改（DECISIONS D-50）。**满足** |
 | B2 | THIRD-PARTY-LICENSES 分「随仓库分发」「下载」两部分；CHANGELOG（Keep a Changelog）+ VERSION | 需修改（缺） | `THIRD-PARTY-LICENSES`、`CHANGELOG.md`、`VERSION` | 已新增；许可来自包元数据/上游许可文件。tag `v0.1.0` 在最终提交上打。**满足** |
