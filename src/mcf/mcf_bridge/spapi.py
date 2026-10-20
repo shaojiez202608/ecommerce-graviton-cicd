@@ -2,13 +2,14 @@
 
 Operation names, paths and field names follow the official Swagger models:
 - Fulfillment Outbound 2020-07-01: createFulfillmentOrder, getFulfillmentOrder,
-  getPackageTrackingDetails (GET /fba/outbound/2020-07-01/...)
+  cancelFulfillmentOrder, getPackageTrackingDetails (/fba/outbound/2020-07-01/...)
 - FBA Inventory v1: getInventorySummaries (GET /fba/inventory/v1/summaries)
 The live client has NOT been run against a real seller account (see VERIFICATION.md).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
@@ -40,6 +41,8 @@ class SpApiClient(Protocol):
     def create_fulfillment_order(self, body: dict) -> dict: ...
 
     def get_fulfillment_order(self, seller_fulfillment_order_id: str) -> dict: ...
+
+    def cancel_fulfillment_order(self, seller_fulfillment_order_id: str) -> dict: ...
 
     def get_package_tracking_details(self, package_number: int) -> dict: ...
 
@@ -76,19 +79,26 @@ class MockSpApiClient:
     """Deterministic stand-in for SP-API. No network access.
 
     Behaviour is driven by synthetic data only:
-    - recipient name ``FAIL_TRANSIENT``: first two create calls return 503, then succeed
+    - recipient name ``FAIL_TRANSIENT`` (= ``FAIL_FIRST_2``): first two create calls return 503
+    - recipient name ``FAIL_FIRST_<n>``: the first n create calls return 503, then succeed
     - recipient name ``FAIL_ALWAYS``: every create call returns 503
     - recipient name ``INVALID_ADDRESS``: create returns 400
+    - recipient name ``LOST_ACK``: the first create call stores the order but returns 503 (the
+      response was lost); a repeated create returns 400 because the id already exists
+    - a create for an id that already exists returns 400 (as for a duplicate sellerFulfillmentOrderId)
+    - cancel succeeds until the order has shipped, then returns 400
     - an order "ships" ``ship_after`` seconds after creation and is "delivered" after
       ``2 * ship_after`` seconds
     - seller SKUs containing ``OOS`` have zero fulfillable quantity; containing ``MISSING``
       are absent from FBA inventory
     """
 
-    def __init__(self, state: MockStateBackend | None = None, ship_after_seconds: int = 0, clock=_now):
+    def __init__(self, state: MockStateBackend | None = None, ship_after_seconds: int = 0, clock=_now,
+                 region: str = "na"):
         self.state = state or InMemoryMockState()
         self.ship_after = timedelta(seconds=ship_after_seconds)
         self.clock = clock
+        self.region = region  # recorded on created orders so routing per marketplace can be checked
         self.calls: list[str] = []
 
     def create_fulfillment_order(self, body: dict) -> dict:
@@ -100,13 +110,17 @@ class MockSpApiClient:
         self.state.put(counter_key, {"n": attempts})
         if name == "INVALID_ADDRESS":
             raise SpApiError(400, "InvalidInput: destinationAddress")
-        if name == "FAIL_ALWAYS" or (name == "FAIL_TRANSIENT" and attempts <= 2):
+        fail_first = 2 if name == "FAIL_TRANSIENT" else _fail_first(name)
+        if name == "FAIL_ALWAYS" or attempts <= fail_first:
             raise SpApiError(503, "ServiceUnavailable (mock)")
-        if self.state.get(f"order#{sfo_id}") is None:
-            self.state.put(
-                f"order#{sfo_id}",
-                {"request": body, "createdAt": self.clock().isoformat()},
-            )
+        if self.state.get(f"order#{sfo_id}") is not None:
+            raise SpApiError(400, f"InvalidInput: sellerFulfillmentOrderId {sfo_id} already exists (mock)")
+        self.state.put(
+            f"order#{sfo_id}",
+            {"request": body, "createdAt": self.clock().isoformat(), "region": self.region},
+        )
+        if name == "LOST_ACK" and attempts == 1:
+            raise SpApiError(503, "ServiceUnavailable after the order was stored (mock lost acknowledgement)")
         return {}  # CreateFulfillmentOrderResponse carries only optional `errors`
 
     def get_fulfillment_order(self, seller_fulfillment_order_id: str) -> dict:
@@ -116,8 +130,8 @@ class MockSpApiClient:
             raise SpApiError(404, "NotFound (mock)")
         req = rec["request"]
         age = self.clock() - datetime.fromisoformat(rec["createdAt"])
-        shipped = age >= self.ship_after
-        status = "Complete" if shipped else "Processing"
+        shipped = age >= self.ship_after and not rec.get("cancelled")
+        status = "Cancelled" if rec.get("cancelled") else ("Complete" if shipped else "Processing")
         shipments = []
         if shipped:
             pkg_no = _package_number(seller_fulfillment_order_id)
@@ -146,6 +160,17 @@ class MockSpApiClient:
                 "fulfillmentShipments": shipments,
             }
         }
+
+    def cancel_fulfillment_order(self, seller_fulfillment_order_id: str) -> dict:
+        self.calls.append("cancelFulfillmentOrder")
+        rec = self.state.get(f"order#{seller_fulfillment_order_id}")
+        if rec is None:
+            raise SpApiError(404, "NotFound (mock)")
+        if self.clock() - datetime.fromisoformat(rec["createdAt"]) >= self.ship_after and not rec.get("cancelled"):
+            raise SpApiError(400, "InvalidInput: order already shipped and cannot be cancelled (mock)")
+        rec["cancelled"] = True
+        self.state.put(f"order#{seller_fulfillment_order_id}", rec)
+        return {}
 
     def get_package_tracking_details(self, package_number: int) -> dict:
         self.calls.append("getPackageTrackingDetails")
@@ -176,7 +201,7 @@ class MockSpApiClient:
             summaries.append(
                 {
                     "sellerSku": sku,
-                    "fnSku": f"X00{abs(hash(sku)) % 10**7:07d}",
+                    "fnSku": "X00" + hashlib.sha256(sku.encode()).hexdigest()[:7].upper(),
                     "condition": "NewItem",
                     "inventoryDetails": {"fulfillableQuantity": qty},
                     "totalQuantity": qty,
@@ -189,6 +214,12 @@ class MockSpApiClient:
             },
             "pagination": {},
         }
+
+
+def _fail_first(name: str) -> int:
+    if name.startswith("FAIL_FIRST_") and name[len("FAIL_FIRST_"):].isdigit():
+        return int(name[len("FAIL_FIRST_"):])
+    return 0
 
 
 def _package_number(sfo_id: str) -> int:
@@ -205,10 +236,13 @@ class LiveSpApiClient:
     nothing is cached on disk. Not exercised against a real account in this prototype.
     """
 
-    def __init__(self, region_key: str, client_id: str, client_secret: str, refresh_token: str, opener=None):
+    def __init__(self, region_key: str, client_id: str, client_secret: str, refresh_token: str, opener=None,
+                 timeout_seconds: int = 20):
         if region_key not in SPAPI_HOSTS:
             raise ValueError(f"unknown SP-API region {region_key!r}")
+        self.region = region_key
         self.host = SPAPI_HOSTS[region_key]
+        self.timeout = timeout_seconds
         self._client_id = client_id
         self._client_secret = client_secret
         self._refresh_token = refresh_token
@@ -236,7 +270,7 @@ class LiveSpApiClient:
 
     def _send(self, req: urllib.request.Request) -> dict:
         try:
-            with self._open(req, timeout=20) as resp:  # noqa: S310
+            with self._open(req, timeout=self.timeout) as resp:  # noqa: S310
                 raw = resp.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
@@ -261,6 +295,10 @@ class LiveSpApiClient:
     def get_fulfillment_order(self, seller_fulfillment_order_id: str) -> dict:
         sfo = urllib.parse.quote(seller_fulfillment_order_id, safe="")
         return self._call("GET", f"/fba/outbound/2020-07-01/fulfillmentOrders/{sfo}")
+
+    def cancel_fulfillment_order(self, seller_fulfillment_order_id: str) -> dict:
+        sfo = urllib.parse.quote(seller_fulfillment_order_id, safe="")
+        return self._call("PUT", f"/fba/outbound/2020-07-01/fulfillmentOrders/{sfo}/cancel")
 
     def get_package_tracking_details(self, package_number: int) -> dict:
         return self._call("GET", "/fba/outbound/2020-07-01/tracking", query={"packageNumber": int(package_number)})

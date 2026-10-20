@@ -1,4 +1,9 @@
-"""Persistence for orders, SKU mappings and mock SP-API state (single DynamoDB table)."""
+"""Persistence for orders, SKU mappings and mock SP-API state (single DynamoDB table).
+
+Order items carry a ``version`` attribute; every save is conditional on the version that was read
+(optimistic locking), so the intake and tracking functions cannot overwrite each other's changes.
+Orders with undelivered events are indexed in the sparse ``gsi2`` index (``gsi2pk = OUTBOX``).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,12 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from .models import MappingStatus, OrderRecord, OrderState
+
+OUTBOX = "OUTBOX"
+
+
+class ConcurrentUpdate(Exception):
+    """The order changed since it was read; re-read and retry."""
 
 
 def utcnow() -> str:
@@ -18,6 +29,7 @@ class Repository(Protocol):
     def create_order_if_absent(self, rec: OrderRecord) -> bool: ...
     def save_order(self, rec: OrderRecord) -> None: ...
     def orders_in_state(self, state: OrderState) -> list[OrderRecord]: ...
+    def orders_with_pending_events(self) -> list[OrderRecord]: ...
     def get_mapping(self, storefront_sku: str, marketplace: str) -> dict | None: ...
     def put_mapping(self, storefront_sku: str, marketplace: str, msku: str) -> None: ...
     def mappings_for(self, marketplace: str) -> list[dict]: ...
@@ -25,7 +37,7 @@ class Repository(Protocol):
 
 
 def _order_to_item(rec: OrderRecord) -> dict:
-    return {
+    item = {
         "pk": f"ORDER#{rec.storefront_order_id}",
         "sk": "META",
         "gsi1pk": f"STATE#{rec.state.value}",
@@ -38,7 +50,15 @@ def _order_to_item(rec: OrderRecord) -> dict:
         "lastError": rec.last_error,
         "packages": json.dumps(rec.packages),
         "updatedAt": rec.updated_at or utcnow(),
+        "version": rec.version,
+        "pendingEvents": json.dumps(rec.pending_events),
+        "eventSeq": rec.event_seq,
+        "mcfCheck": rec.mcf_check,
     }
+    if rec.pending_events:  # sparse index: only orders with undelivered events
+        item["gsi2pk"] = OUTBOX
+        item["gsi2sk"] = item["updatedAt"]
+    return item
 
 
 def _item_to_order(item: dict) -> OrderRecord:
@@ -51,6 +71,10 @@ def _item_to_order(item: dict) -> OrderRecord:
         last_error=item.get("lastError", ""),
         packages=json.loads(item.get("packages") or "[]"),
         updated_at=item.get("updatedAt", ""),
+        version=int(item.get("version", 0)),
+        pending_events=json.loads(item.get("pendingEvents") or "[]"),
+        event_seq=int(item.get("eventSeq", 0)),
+        mcf_check=bool(item.get("mcfCheck", False)),
     )
 
 
@@ -67,15 +91,24 @@ class InMemoryRepository:
         if key in self.items:
             return False
         rec.updated_at = utcnow()
+        rec.version = 1
         self.items[key] = _order_to_item(rec)
         return True
 
     def save_order(self, rec):
+        key = (f"ORDER#{rec.storefront_order_id}", "META")
+        current = self.items.get(key)
+        if current is not None and int(current.get("version", 0)) != rec.version:
+            raise ConcurrentUpdate(rec.storefront_order_id)
         rec.updated_at = utcnow()
-        self.items[(f"ORDER#{rec.storefront_order_id}", "META")] = _order_to_item(rec)
+        rec.version += 1
+        self.items[key] = _order_to_item(rec)
 
     def orders_in_state(self, state):
         return [_item_to_order(i) for i in self.items.values() if i.get("gsi1pk") == f"STATE#{state.value}"]
+
+    def orders_with_pending_events(self):
+        return [_item_to_order(i) for i in self.items.values() if i.get("gsi2pk") == OUTBOX]
 
     def get_mapping(self, storefront_sku, marketplace):
         return self.items.get((f"SKU#{storefront_sku}", f"MKT#{marketplace}"))
@@ -120,6 +153,7 @@ class DynamoRepository:
         from botocore.exceptions import ClientError
 
         rec.updated_at = utcnow()
+        rec.version = 1
         try:
             self.table.put_item(Item=_order_to_item(rec), ConditionExpression="attribute_not_exists(pk)")
             return True
@@ -129,19 +163,40 @@ class DynamoRepository:
             raise
 
     def save_order(self, rec):
-        rec.updated_at = utcnow()
-        self.table.put_item(Item=_order_to_item(rec))
+        from botocore.exceptions import ClientError
 
-    def orders_in_state(self, state):
+        expected = rec.version
+        rec.updated_at = utcnow()
+        rec.version = expected + 1
+        try:
+            self.table.put_item(
+                Item=_order_to_item(rec),
+                ConditionExpression="attribute_not_exists(pk) OR attribute_not_exists(version) OR version = :v",
+                ExpressionAttributeValues={":v": expected},
+            )
+        except ClientError as exc:
+            rec.version = expected
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise ConcurrentUpdate(rec.storefront_order_id) from exc
+            raise
+
+    def _query(self, index: str, key: str, value: str) -> list[dict]:
         from boto3.dynamodb.conditions import Key
 
-        out, kwargs = [], {"IndexName": "gsi1", "KeyConditionExpression": Key("gsi1pk").eq(f"STATE#{state.value}")}
+        out, kwargs = [], {"IndexName": index, "KeyConditionExpression": Key(key).eq(value)}
         while True:
             resp = self.table.query(**kwargs)
-            out.extend(_item_to_order(i) for i in resp.get("Items", []))
+            out.extend(resp.get("Items", []))
             if "LastEvaluatedKey" not in resp:
                 return out
             kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+    def orders_in_state(self, state):
+        # GSI reads are eventually consistent; callers re-read the item (ConsistentRead) before acting.
+        return [_item_to_order(i) for i in self._query("gsi1", "gsi1pk", f"STATE#{state.value}")]
+
+    def orders_with_pending_events(self):
+        return [_item_to_order(i) for i in self._query("gsi2", "gsi2pk", OUTBOX)]
 
     def get_mapping(self, storefront_sku, marketplace):
         return self.table.get_item(Key={"pk": f"SKU#{storefront_sku}", "sk": f"MKT#{marketplace}"}).get("Item")
@@ -150,15 +205,7 @@ class DynamoRepository:
         self.table.put_item(Item=_mapping_item(storefront_sku, marketplace, msku))
 
     def mappings_for(self, marketplace):
-        from boto3.dynamodb.conditions import Key
-
-        out, kwargs = [], {"IndexName": "gsi1", "KeyConditionExpression": Key("gsi1pk").eq(f"MAPPING#{marketplace}")}
-        while True:
-            resp = self.table.query(**kwargs)
-            out.extend(resp.get("Items", []))
-            if "LastEvaluatedKey" not in resp:
-                return out
-            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+        return self._query("gsi1", "gsi1pk", f"MAPPING#{marketplace}")
 
     def update_mapping(self, storefront_sku, marketplace, status, qty):
         expr, values = "SET #s = :s, checkedAt = :c", {":s": status.value, ":c": utcnow()}

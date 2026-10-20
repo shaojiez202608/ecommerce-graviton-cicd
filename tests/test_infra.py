@@ -170,7 +170,7 @@ def test_mcf_queue_dlq_and_alarms(sandbox):
     t = sandbox["proto-ecom-dev-mcf"]
     t.has_resource_properties("AWS::SQS::Queue", {"RedrivePolicy": Match.object_like({"maxReceiveCount": 3})})
     t.has_resource_properties("AWS::Lambda::EventSourceMapping", {"FunctionResponseTypes": ["ReportBatchItemFailures"]})
-    t.resource_count_is("AWS::CloudWatch::Alarm", 5)
+    t.resource_count_is("AWS::CloudWatch::Alarm", 7)
     t.has_resource_properties("AWS::Lambda::Function", {"Environment": {"Variables": Match.object_like({"SPAPI_MODE": "mock"})}})
     secret = next(iter(t.find_resources("AWS::SecretsManager::Secret").values()))
     assert "REPLACE_ME" in json.dumps(secret["Properties"]["SecretString"])
@@ -252,3 +252,29 @@ def test_smoke_test_follows_the_scheme():
     smoke = (ROOT / "scripts" / "deploy" / "smoke_test.sh").read_text()
     assert '--connect-to "$HOST:443:$ALB:443"' in smoke and 'BASE="https://$HOST"' in smoke
     assert "-k" not in smoke.split() and "--insecure" not in smoke
+
+
+def test_mcf_intake_timeout_covers_the_batch_and_queue_visibility(sandbox, customer):
+    from ecom_infra.config import load
+    for profile, templates in (("sandbox", sandbox), ("customer", customer)):
+        mcf = load(ROOT / "config" / f"{profile}.json", synth_check=True).environments["dev"].mcf
+        t = templates["proto-ecom-dev-mcf"]
+        fn = next(f for f in t.find_resources("AWS::Lambda::Function").values()
+                  if f["Properties"].get("Handler") == "mcf_bridge.handlers.order_intake")["Properties"]
+        worst = mcf.intake_batch_size * (4 * mcf.spapi_http_timeout_seconds)
+        assert fn["Timeout"] > worst
+        esm = next(iter(t.find_resources("AWS::Lambda::EventSourceMapping").values()))["Properties"]
+        assert esm["BatchSize"] == mcf.intake_batch_size
+        queue = next(q for q in t.find_resources("AWS::SQS::Queue").values() if "RedrivePolicy" in q["Properties"])
+        assert queue["Properties"]["VisibilityTimeout"] >= 6 * fn["Timeout"]
+        env = fn["Environment"]["Variables"]
+        assert json.loads(env["MARKETPLACES"])["US"] == {"id": "ATVPDKIKX0DER", "region": "na"}
+        assert int(env["STUCK_RECEIVED_MINUTES"]) * 60 > queue["Properties"]["VisibilityTimeout"] * mcf.max_attempts
+
+
+def test_mcf_outbox_index_and_cancel_route(sandbox):
+    t = sandbox["proto-ecom-dev-mcf"]
+    table = next(iter(t.find_resources("AWS::DynamoDB::GlobalTable").values()))["Properties"]
+    assert {g["IndexName"] for g in table["GlobalSecondaryIndexes"]} == {"gsi1", "gsi2"}
+    t.has_resource_properties("AWS::Events::Rule", {"EventPattern": {
+        "source": ["storefront.orders"], "detail-type": ["Order Paid", "Order Cancelled"]}})

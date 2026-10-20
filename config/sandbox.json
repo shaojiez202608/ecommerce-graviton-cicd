@@ -68,6 +68,10 @@
           "US": {
             "id": "ATVPDKIKX0DER",
             "region": "na"
+          },
+          "DE": {
+            "id": "A1PA6795UKMFR9",
+            "region": "eu"
           }
         },
         "fulfillment_policy": "FillOrKill",
@@ -77,7 +81,7 @@
         "mock_ship_after_seconds": 60,
         "lambda_memory_mib": 256,
         "intake_batch_size": 1,
-        "spapi_http_timeout_seconds": 20
+        "spapi_http_timeout_seconds": 5
       }
     }
   }

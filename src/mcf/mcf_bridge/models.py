@@ -14,7 +14,7 @@ class OrderState(StrEnum):
     SHIPPED = "SHIPPED"  # at least one package has a tracking number
     COMPLETE = "COMPLETE"  # every package reported DELIVERED
     EXCEPTION = "EXCEPTION"  # needs a human (alarm raised)
-    CANCELLED = "CANCELLED"
+    CANCELLED = "CANCELLED"  # cancelled by the storefront (cancelFulfillmentOrder) or reported Cancelled by MCF
 
 
 TERMINAL_STATES = {OrderState.COMPLETE, OrderState.CANCELLED}
@@ -160,3 +160,12 @@ class OrderRecord:
     last_error: str = ""
     packages: list[dict] = field(default_factory=list)
     updated_at: str = ""
+    # Optimistic locking: every save must carry the version it read.
+    version: int = 0
+    # Transactional outbox: events recorded together with the state change that caused them and
+    # removed only after EventBridge accepted them (at-least-once; consumers dedupe on eventId).
+    pending_events: list[dict] = field(default_factory=list)
+    event_seq: int = 0
+    # True when we gave up without being able to confirm whether MCF created the order;
+    # the tracking poller keeps asking getFulfillmentOrder until it gets a definite answer.
+    mcf_check: bool = False

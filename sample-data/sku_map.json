@@ -5,6 +5,7 @@
     {"sku": "SENSOR-TEMP-BLK", "marketplace": "US", "msku": "DEMO-SENSOR-TEMP-BLK-US"},
     {"sku": "HUB-MINI-V2", "marketplace": "US", "msku": "DEMO-HUB-MINI-V2-US"},
     {"sku": "PLUG-SMART-2PK", "marketplace": "US", "msku": "DEMO-PLUG-2PK-OOS-US"},
-    {"sku": "CAM-INDOOR-LEGACY", "marketplace": "US", "msku": "DEMO-CAM-LEGACY-MISSING-US"}
+    {"sku": "CAM-INDOOR-LEGACY", "marketplace": "US", "msku": "DEMO-CAM-LEGACY-MISSING-US"},
+    {"sku": "SENSOR-TEMP-WHT", "marketplace": "DE", "msku": "DEMO-SENSOR-TEMP-WHT-DE"}
   ]
 }

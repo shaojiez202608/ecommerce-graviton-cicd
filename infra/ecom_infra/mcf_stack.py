@@ -41,10 +41,10 @@ class McfStack(Stack):
             partition_key=ddb.Attribute(name="pk", type=ddb.AttributeType.STRING),
             sort_key=ddb.Attribute(name="sk", type=ddb.AttributeType.STRING),
             global_secondary_indexes=[ddb.GlobalSecondaryIndexPropsV2(
-                index_name="gsi1",
-                partition_key=ddb.Attribute(name="gsi1pk", type=ddb.AttributeType.STRING),
-                sort_key=ddb.Attribute(name="gsi1sk", type=ddb.AttributeType.STRING),
-            )],
+                index_name=ix,
+                partition_key=ddb.Attribute(name=f"{ix}pk", type=ddb.AttributeType.STRING),
+                sort_key=ddb.Attribute(name=f"{ix}sk", type=ddb.AttributeType.STRING),
+            ) for ix in ("gsi1", "gsi2")],  # gsi1: state / mapping lookups; gsi2: sparse outbox index
             billing=ddb.Billing.on_demand(),
             point_in_time_recovery_specification=ddb.PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True),
@@ -66,7 +66,8 @@ class McfStack(Stack):
             secret_object_value={
                 "lwa_client_id": SecretValue.unsafe_plain_text("REPLACE_ME"),
                 "lwa_client_secret": SecretValue.unsafe_plain_text("REPLACE_ME"),
-                "lwa_refresh_token": SecretValue.unsafe_plain_text("REPLACE_ME"),
+                # one refresh token per SP-API endpoint region used by the configured marketplaces
+                **{f"lwa_refresh_token_{r}": SecretValue.unsafe_plain_text("REPLACE_ME") for r in mcf.regions},
             },
             removal_policy=removal,
         )
@@ -84,7 +85,7 @@ class McfStack(Stack):
         )
         events.Rule(
             self, "OrderPaidRule", event_bus=self.bus,
-            event_pattern=events.EventPattern(source=[STOREFRONT_SOURCE], detail_type=["Order Paid"]),
+            event_pattern=events.EventPattern(source=[STOREFRONT_SOURCE], detail_type=["Order Paid", "Order Cancelled"]),
             targets=[targets.SqsQueue(self.queue)],
         )
 
@@ -106,9 +107,11 @@ class McfStack(Stack):
             "TABLE_NAME": self.table.table_name,
             "EVENT_BUS_NAME": self.bus.event_bus_name,
             "SPAPI_MODE": mcf.spapi_mode,
-            "SPAPI_REGION": mcf.regions[0],
             "SPAPI_SECRET_ARN": self.secret.secret_arn,
-            "MARKETPLACE_IDS": json.dumps({k: m.marketplace_id for k, m in mcf.marketplaces.items()}),
+            "SPAPI_HTTP_TIMEOUT_SECONDS": str(mcf.spapi_http_timeout_seconds),
+            "MARKETPLACES": json.dumps({k: {"id": m.marketplace_id, "region": m.region}
+                                        for k, m in mcf.marketplaces.items()}),
+            "STUCK_RECEIVED_MINUTES": str(mcf.stuck_received_minutes),
             "FULFILLMENT_POLICY": mcf.fulfillment_policy,
             "MAX_ATTEMPTS": str(mcf.max_attempts),
             "MOCK_SHIP_AFTER_SECONDS": str(mcf.mock_ship_after_seconds),
@@ -139,7 +142,7 @@ class McfStack(Stack):
         self.intake.add_event_source(sources.SqsEventSource(
             self.queue, batch_size=mcf.intake_batch_size, report_batch_item_failures=True, max_concurrency=2,
         ))
-        self.tracking = fn("TrackingFn", "mcf-tracking", "tracking_poller", 120)
+        self.tracking = fn("TrackingFn", "mcf-tracking", "tracking_poller", 300)
         self.inventory = fn("InventoryFn", "mcf-inventory", "inventory_sync", 300)
         events.Rule(self, "TrackingSchedule",
                     schedule=events.Schedule.rate(Duration.minutes(mcf.tracking_poll_minutes)),
@@ -161,6 +164,12 @@ class McfStack(Stack):
             ("InvalidSkuMappings", cw.Metric(namespace="EcomMcfBridge", metric_name="McfInvalidSkuMapping",
                                              period=Duration.hours(1), statistic="Sum"),
              "Storefront SKUs mapped to MSKUs that FBA inventory does not know"),
+            ("EventPublishFailures", cw.Metric(namespace="EcomMcfBridge", metric_name="McfEventPublishFailed",
+                                               period=Duration.minutes(15), statistic="Sum"),
+             "Bridge events could not be published and wait in the outbox (republished by the poller)"),
+            ("TrackingOrderErrors", cw.Metric(namespace="EcomMcfBridge", metric_name="McfTrackingErrors",
+                                              period=Duration.minutes(15), statistic="Sum"),
+             "Tracking poll failed for individual orders (other orders were still processed)"),
             ("IntakeErrors", self.intake.metric_errors(period=Duration.minutes(5)), "Intake Lambda errors"),
             ("TrackingErrors", self.tracking.metric_errors(period=Duration.minutes(15)), "Tracking Lambda errors"),
         ):

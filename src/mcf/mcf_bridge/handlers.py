@@ -39,11 +39,18 @@ class EventBridgePublisher:
             raise RuntimeError(f"PutEvents failed: {resp['Entries']}")
 
 
-def build_client(mode: str, table):
+def marketplaces() -> dict[str, dict]:
+    """MARKETPLACES = {"US": {"id": "ATVPDKIKX0DER", "region": "na"}, ...}"""
+    return json.loads(os.environ["MARKETPLACES"])
+
+
+def build_clients(mode: str, table) -> dict:
+    """One SP-API client per endpoint region used by the configured marketplaces."""
+    regions = sorted({m["region"] for m in marketplaces().values()})
     if mode == "mock":
-        return MockSpApiClient(
-            state=DynamoMockState(table), ship_after_seconds=int(os.environ.get("MOCK_SHIP_AFTER_SECONDS", "60"))
-        )
+        state = DynamoMockState(table)
+        ship_after = int(os.environ.get("MOCK_SHIP_AFTER_SECONDS", "60"))
+        return {r: MockSpApiClient(state=state, ship_after_seconds=ship_after, region=r) for r in regions}
     if mode != "live":
         raise ValueError(f"SPAPI_MODE must be mock or live, got {mode!r}")
     secret = json.loads(
@@ -51,40 +58,56 @@ def build_client(mode: str, table):
     )
     if PLACEHOLDER in secret.values():
         raise RuntimeError("SP-API secret still holds placeholders; refusing live mode")
-    return LiveSpApiClient(
-        region_key=os.environ.get("SPAPI_REGION", "na"),
-        client_id=secret["lwa_client_id"],
-        client_secret=secret["lwa_client_secret"],
-        refresh_token=secret["lwa_refresh_token"],
-    )
+    timeout = int(os.environ.get("SPAPI_HTTP_TIMEOUT_SECONDS", "20"))
+    clients = {}
+    for region in regions:
+        token = secret.get(f"lwa_refresh_token_{region}")
+        if not token:
+            raise RuntimeError(f"SP-API secret has no lwa_refresh_token_{region}; refusing live mode")
+        clients[region] = LiveSpApiClient(
+            region_key=region,
+            client_id=secret["lwa_client_id"],
+            client_secret=secret["lwa_client_secret"],
+            refresh_token=token,
+            timeout_seconds=timeout,
+        )
+    return clients
 
 
 @lru_cache(maxsize=1)
 def bridge() -> McfBridge:
     table = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
+    markets = marketplaces()
     settings = Settings(
-        marketplace_ids=json.loads(os.environ["MARKETPLACE_IDS"]),
+        marketplace_ids={k: v["id"] for k, v in markets.items()},
+        marketplace_regions={k: v["region"] for k, v in markets.items()},
         default_fulfillment_policy=os.environ.get("FULFILLMENT_POLICY", "FillOrKill"),
         max_attempts=int(os.environ.get("MAX_ATTEMPTS", "3")),
+        stuck_received_minutes=int(os.environ.get("STUCK_RECEIVED_MINUTES", "0")),
     )
     return McfBridge(
         repo=DynamoRepository(table),
-        client=build_client(os.environ.get("SPAPI_MODE", "mock"), table),
+        client=build_clients(os.environ.get("SPAPI_MODE", "mock"), table),
         publisher=EventBridgePublisher(os.environ["EVENT_BUS_NAME"]),
         settings=settings,
     )
 
 
 def order_intake(event, _context):
-    """SQS batch handler (ReportBatchItemFailures). Each body is an EventBridge event."""
+    """SQS batch handler (ReportBatchItemFailures). Each body is an EventBridge event:
+    `Order Paid` -> submit to MCF, `Order Cancelled` -> cancel."""
     failures = []
     for record in event.get("Records", []):
         try:
             envelope = json.loads(record["body"])
             detail = envelope.get("detail", envelope)
+            detail_type = envelope.get("detail-type", "Order Paid")
             receive_count = int(record.get("attributes", {}).get("ApproximateReceiveCount", "1"))
-            result = bridge().submit(detail, receive_count=receive_count)
-            log.info("order %s -> %s %s", result.order_id, result.state, result.detail)
+            if detail_type == "Order Cancelled":
+                result = bridge().cancel(detail)
+            else:
+                result = bridge().submit(detail, receive_count=receive_count)
+            log.info("%s %s -> %s %s", detail_type, result.order_id, result.state, result.detail)
         except RetryLater as exc:
             log.warning("transient failure, will retry: %s", exc)
             failures.append({"itemIdentifier": record["messageId"]})
