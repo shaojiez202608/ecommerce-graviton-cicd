@@ -285,6 +285,7 @@ class LiveSpApiClient:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)  # noqa: S310 - https host from allowlist
         req.add_header("x-amz-access-token", self._access_token())
+        req.add_header("x-amz-date", datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"))
         req.add_header("Content-Type", "application/json")
         req.add_header("User-Agent", "ecommerce-graviton-cicd-prototype/0.1 (Language=Python)")
         return self._send(req)

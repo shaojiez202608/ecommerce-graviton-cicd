@@ -46,6 +46,7 @@ def test_token_exchange_and_header():
     assert form["grant_type"] == ["refresh_token"] and form["client_id"] == ["test-client"]
     api = [r for r in op.requests if r.full_url != LWA_TOKEN_URL]
     assert api[0].get_header("X-amz-access-token") == "test-access"
+    assert api[0].get_header("X-amz-date").endswith("Z") and api[0].get_header("User-agent")
     assert api[0].full_url == "https://sellingpartnerapi-na.amazon.com/fba/outbound/2020-07-01/fulfillmentOrders/SF-1"
 
 
@@ -73,3 +74,13 @@ def test_http_errors_map_to_retryability(status, retryable):
 def test_unknown_region_rejected():
     with pytest.raises(ValueError):
         LiveSpApiClient("xx", "a", "b", "c")
+
+
+def test_cancel_path_and_timeout():
+    op = FakeOpener()
+    c = LiveSpApiClient("eu", "a", "b", "c", opener=op, timeout_seconds=7)
+    c.cancel_fulfillment_order("SF-1")
+    api = [r for r in op.requests if r.full_url != LWA_TOKEN_URL][0]
+    assert api.get_method() == "PUT"
+    assert api.full_url == "https://sellingpartnerapi-eu.amazon.com/fba/outbound/2020-07-01/fulfillmentOrders/SF-1/cancel"
+    assert c.timeout == 7
