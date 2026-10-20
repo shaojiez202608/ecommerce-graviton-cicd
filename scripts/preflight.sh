@@ -85,7 +85,7 @@ aws cloudformation describe-stacks --stack-name CDKToolkit --query 'Stacks[0].St
 echo "[preflight] 4. destructive-change guard (cdk diff)"
 EXTRA=()
 [ -n "${CDK_CONTEXT_ARGS:-}" ] && read -r -a EXTRA <<< "$CDK_CONTEXT_ARGS"
-(cd "$ROOT" && npx -y aws-cdk@2 diff --all -c config="$ECOM_CONFIG" ${EXTRA[@]+"${EXTRA[@]}"} --no-color) > /tmp/preflight-diff.txt 2>&1 \
+(cd "$ROOT" && npx -y aws-cdk@2 diff -c config="$ECOM_CONFIG" --output cdk.out/preflight ${EXTRA[@]+"${EXTRA[@]}"} --no-color) > /tmp/preflight-diff.txt 2>&1 \
   || note "cdk diff returned non-zero (differences found or first deployment)"
 grep -qE '^Stack ' /tmp/preflight-diff.txt || { bad "cdk diff produced no stack output (see /tmp/preflight-diff.txt)"; }
 python3 "$ROOT/scripts/check_destructive.py" /tmp/preflight-diff.txt --protected "${PROTECTED_ENVS:-uat,prod}" || fail=1
