@@ -30,6 +30,9 @@ catch (Throwable $t) { fwrite(STDERR, "db check failed: " . $t->getMessage() . "
 
 if [ "$installed" = "no" ]; then
   echo "[migrate] database empty -> setup:install"
+  # setup:install must start without an env.php: with an install date present Magento treats
+  # the deployment as installed and looks for scopes in the (still empty) database.
+  rm -f app/etc/env.php
   php -d memory_limit=-1 bin/magento setup:install \
     --db-host="$MAGENTO_DB_HOST" --db-name="$MAGENTO_DB_NAME" \
     --db-user="$MAGENTO_DB_USER" --db-password="$MAGENTO_DB_PASSWORD" \
