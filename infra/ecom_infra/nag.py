@@ -50,6 +50,8 @@ BY_KIND: dict[str, dict[str, str]] = {
         "IAM5[Resource::*]": "ecs:RegisterTaskDefinition/DescribeTaskDefinition, ecs:ListServiceDeployments, "
         "ecr:GetAuthorizationToken, ELB Describe* and EC2 network-interface describe actions do not support "
         "resource-level permissions.",
+        "IAM5[Resource::arn:<AWS::Partition>:s3:::{project}-artifacts-<AWS::AccountId>-{region}/*]":
+        "Deploy project reads pipeline artifacts (objects only) from the pipeline artifact bucket.",
         "IAM5[Resource::arn:<AWS::Partition>:ssm:{region}:<AWS::AccountId>:parameter{prefix}/{env}/*]":
         "Deploy project reads only this environment's parameter path.",
         "IAM5[Resource::arn:<AWS::Partition>:logs:{region}:<AWS::AccountId>:log-group:/aws/codebuild/<DeployProject1CF7CB79>:*]":

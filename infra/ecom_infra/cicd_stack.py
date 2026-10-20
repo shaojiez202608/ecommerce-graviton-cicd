@@ -23,6 +23,10 @@ from constructs import Construct
 from .config import AppConfig
 
 
+def artifact_bucket_name(cfg: AppConfig, stack: Stack) -> str:
+    return f"{cfg.project}-artifacts-{stack.account}-{stack.region}"
+
+
 class CicdStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, *, app_cfg: AppConfig, **kwargs):
         super().__init__(scope, construct_id, **kwargs)
@@ -52,7 +56,10 @@ class CicdStack(Stack):
             lifecycle_rules=[s3.LifecycleRule(noncurrent_version_expiration=Duration.days(30))],
         )
         self.source_bucket = s3.Bucket(self, "SourceBucket", event_bridge_enabled=True, **bucket_props)
-        self.artifact_bucket = s3.Bucket(self, "ArtifactBucket", **bucket_props)
+        # Deterministic name so each environment's deploy project (in its own stack) can be granted
+        # read access without cross-stack exports.
+        self.artifact_bucket = s3.Bucket(self, "ArtifactBucket", bucket_name=artifact_bucket_name(cfg, self),
+                                         **bucket_props)
 
         self.approval_topic = sns.Topic(self, "Approvals", topic_name=cfg.name("approvals"), enforce_ssl=True)
         if cfg.build.alarm_email:

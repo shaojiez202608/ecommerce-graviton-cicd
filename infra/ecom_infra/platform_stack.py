@@ -35,6 +35,7 @@ from aws_cdk import aws_sns_subscriptions as subs
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
+from .cicd_stack import artifact_bucket_name
 from .config import AppConfig, EnvConfig
 
 WEB_PORT = 8080
@@ -602,6 +603,11 @@ class PlatformStack(Stack):
             resources=[self.web_td.task_role.role_arn, self.web_td.obtain_execution_role().role_arn,
                        self.ops_td.task_role.role_arn, self.ops_td.obtain_execution_role().role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}},
+        ))
+        # Read the pipeline's build artifact (imageDetail.json + deploy scripts).
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:GetObjectVersion"],
+            resources=[f"arn:{stack.partition}:s3:::{artifact_bucket_name(self.app_cfg, stack)}/*"],
         ))
         if self.env_cfg.snapshot_before_migrate:
             role.add_to_principal_policy(iam.PolicyStatement(
