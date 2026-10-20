@@ -22,10 +22,14 @@ return [
         'adminhtml/Magento/backend' => ['parent_id' => null, 'theme_path' => 'Magento/backend', 'theme_title' => 'Magento 2 backend', 'is_featured' => '0', 'area' => 'adminhtml', 'type' => '0', 'code' => 'Magento/backend'],
         'frontend/Magento/luma' => ['parent_id' => 'Magento/blank', 'theme_path' => 'Magento/luma', 'theme_title' => 'Magento Luma', 'is_featured' => '0', 'area' => 'frontend', 'type' => '0', 'code' => 'Magento/luma'],
     ],
+    // Locale (i18n) settings must also be in config.php for DB-less static content deploy.
     'system' => [
+        'websites' => ['base' => ['general' => ['locale' => ['code' => 'en_US']]]],
+        'stores' => ['default' => ['general' => ['locale' => ['code' => 'en_US']], 'design' => ['theme' => ['theme_id' => 'frontend/Magento/luma']]]],
         'default' => [
+            'general' => ['locale' => ['code' => 'en_US']],
             'design' => ['theme' => ['theme_id' => 'frontend/Magento/luma']],
-            'dev' => ['js' => ['merge_files' => '1', 'minify_files' => '1'], 'css' => ['merge_css_files' => '1', 'minify_files' => '1']],
+            'dev' => ['static' => ['sign' => '1']],
         ],
     ],
 ];
