@@ -16,8 +16,12 @@ $p = new PDO("mysql:host=" . getenv("MAGENTO_DB_HOST"), getenv("MAGENTO_DB_MASTE
 $db = str_replace("`", "", getenv("MAGENTO_DB_NAME"));
 $u = $p->quote(getenv("MAGENTO_DB_USER")); $pw = $p->quote(getenv("MAGENTO_DB_PASSWORD"));
 $p->exec("CREATE DATABASE IF NOT EXISTS `$db`");
-$p->exec("CREATE USER IF NOT EXISTS $u@\"%\" IDENTIFIED BY $pw");
-$p->exec("ALTER USER $u@\"%\" IDENTIFIED BY $pw");
+$q = $p->prepare("SELECT COUNT(*) FROM mysql.user WHERE user = ? AND host = \"%\"");
+$q->execute([getenv("MAGENTO_DB_USER")]);
+// CREATE USER IF NOT EXISTS is rejected by MySQL 8.4 once the user is a trigger definer,
+// so only create it when it is missing.
+if ((int) $q->fetchColumn() === 0) { $p->exec("CREATE USER $u@\"%\" IDENTIFIED BY $pw"); }
+else { $p->exec("ALTER USER $u@\"%\" IDENTIFIED BY $pw"); }
 $p->exec("GRANT ALL PRIVILEGES ON `$db`.* TO $u@\"%\"");
 echo "[migrate] application database user ready\n";'
 
