@@ -73,13 +73,21 @@ echo "[deploy] waiting for service to become stable"
 if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
   aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE" || true
 fi
-STATE=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
-  --query 'services[0].deployments[?status==`PRIMARY`].[taskDefinition,rolloutState]' --output text)
-echo "[deploy] primary deployment: $STATE"
-case "$STATE" in
-  "$WEB_TD"*COMPLETED*) ;;
-  *) echo "[deploy] new revision is not the completed primary deployment (rolled back or stuck)" >&2; exit 1 ;;
-esac
+# services-stable can return before rolloutState settles; poll the PRIMARY deployment.
+for _ in $(seq 1 40); do
+  read -r PRIMARY_TD ROLLOUT < <(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+    --query 'services[0].deployments[?status==`PRIMARY`] | [0].[taskDefinition,rolloutState]' --output text)
+  echo "[deploy] primary=${PRIMARY_TD##*/} rollout=$ROLLOUT"
+  if [ "$PRIMARY_TD" != "$WEB_TD" ]; then
+    echo "[deploy] service rolled back to ${PRIMARY_TD##*/}; failing the stage" >&2; exit 1
+  fi
+  case "$ROLLOUT" in
+    COMPLETED) break ;;
+    FAILED) echo "[deploy] deployment FAILED" >&2; exit 1 ;;
+  esac
+  sleep 15
+done
+[ "$ROLLOUT" = "COMPLETED" ] || { echo "[deploy] deployment did not complete in time" >&2; exit 1; }
 
 run_once "$OPS_TD" /usr/local/bin/magento-cache-flush cache-flush
 echo "[deploy] $ENV_NAME now runs $IMAGE_URI"
