@@ -22,6 +22,7 @@ import sys
 import time
 
 DONE = {"COMPLETE", "ACTIVE"}
+SETTLE_SECONDS = 60
 BAD = {"FAILED", "UNSUPPORTED_IMAGE", "FINDINGS_UNAVAILABLE", "SCAN_ELIGIBILITY_EXPIRED"}
 
 
@@ -102,10 +103,24 @@ def gate(argv: list[str], verify_only: bool = False) -> int:
     on_unavailable = argv[5] if len(argv) > 5 else "fail"
     deadline = time.time() + timeout
     write = (lambda data: None) if verify_only else (lambda data: json.dump(data, open("scan-counts.json", "w")))
+    previous: dict | None = None
     while True:
         resp = describe(repo, tag)
         status = (resp.get("imageScanStatus") or {}).get("status", "PENDING")
-        if status in DONE:
+        if status == "COMPLETE":
+            break
+        if status == "ACTIVE":
+            # Enhanced scanning reports ACTIVE as soon as monitoring starts, while findings are
+            # still being added. Require the same counts on two polls SETTLE_SECONDS apart (or
+            # any blocked finding) before deciding; the deploy re-check covers later findings.
+            counts = severity_counts(resp)
+            if any(counts.get(s, 0) for s in blocked) or (counts and counts == previous):
+                break
+            previous = counts
+            if time.time() + SETTLE_SECONDS <= deadline:
+                print(f"scan ACTIVE, waiting for findings to settle (counts {counts})")
+                time.sleep(SETTLE_SECONDS)
+                continue
             break
         if status in BAD:
             print(f"scan gate failed: scan status {status}", file=sys.stderr)

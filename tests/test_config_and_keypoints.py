@@ -269,3 +269,19 @@ def test_scan_gate_reads_every_page(monkeypatch):
     resp = mod.describe("repo", "tag")
     assert len(calls) == 2 and "--next-token" in calls[1]
     assert mod.severity_counts(resp) == {"HIGH": 1, "CRITICAL": 1}  # the critical finding is on page 2
+
+
+def test_scan_gate_waits_for_enhanced_findings_to_settle(monkeypatch, tmp_path):
+    mod = load_gate()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(mod, "SETTLE_SECONDS", 0)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    results = iter([{"LOW": 1}, {"LOW": 1, "CRITICAL": 1}])
+
+    def describe(repo, tag):
+        counts = next(results)
+        items = [{"severity": k} for k, v in counts.items() for _ in range(v)]
+        return {"imageScanStatus": {"status": "ACTIVE"}, "imageScanFindings": {"enhancedFindings": items}}
+
+    monkeypatch.setattr(mod, "describe", describe)
+    assert mod.gate(["x", "repo", "t", "CRITICAL", "60", "fail"]) == 1  # second poll saw the critical finding
