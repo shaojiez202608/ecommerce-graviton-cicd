@@ -21,7 +21,7 @@ if [ "$installed" = "no" ]; then
   php -d memory_limit=-1 bin/magento setup:install \
     --db-host="$MAGENTO_DB_HOST" --db-name="$MAGENTO_DB_NAME" \
     --db-user="$MAGENTO_DB_USER" --db-password="$MAGENTO_DB_PASSWORD" \
-    --db-ssl-ca=/etc/ssl/certs/rds-global-bundle.pem --db-ssl-verify=1 \
+    --db-ssl-ca=/etc/ssl/certs/rds-global-bundle.pem --db-ssl-verify \
     --key="$MAGENTO_CRYPT_KEY" \
     --base-url="$MAGENTO_BASE_URL" --backend-frontname="${MAGENTO_ADMIN_FRONTNAME:-admin}" \
     --admin-user="$MAGENTO_ADMIN_USER" --admin-password="$MAGENTO_ADMIN_PASSWORD" \
@@ -30,7 +30,7 @@ if [ "$installed" = "no" ]; then
     --search-engine=opensearch --opensearch-host="https://$MAGENTO_OPENSEARCH_HOST" --opensearch-port=443 \
     --opensearch-enable-auth=1 --opensearch-username="$MAGENTO_OPENSEARCH_USER" \
     --opensearch-password="$MAGENTO_OPENSEARCH_PASSWORD" --opensearch-index-prefix="${MAGENTO_OPENSEARCH_PREFIX:-magento2}" \
-    --cleanup-database=0 --no-interaction
+    --no-interaction
   # setup:install rewrote env.php; restore the injected one so runtime and migration agree.
   php /usr/local/lib/magento/env-tool.php render app/etc/env.php
   php bin/magento app:config:import --no-interaction
