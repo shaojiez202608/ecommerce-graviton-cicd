@@ -27,23 +27,39 @@ RUN curl -fsSL -o /etc/ssl/certs/rds-global-bundle.pem https://truststore.pki.rd
 COPY docker/php.ini /usr/local/etc/php/conf.d/zz-magento.ini
 COPY docker/php-fpm-pool.conf /usr/local/etc/php-fpm.d/zz-magento.conf
 
-FROM base AS builder
+FROM base AS source
 ARG MAGENTO_REPO=https://github.com/magento/magento2.git
 ARG MAGENTO_REF=2.4.8-p5
-ARG STATIC_LOCALES="en_US"
-ARG SCD_JOBS=4
 COPY --from=composer /usr/bin/composer /usr/bin/composer
 RUN apt-get update && apt-get install -y --no-install-recommends git unzip && rm -rf /var/lib/apt/lists/*
 WORKDIR /var/www/magento
 RUN git clone --depth 1 --branch "${MAGENTO_REF}" "${MAGENTO_REPO}" . && rm -rf .git
 ENV COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1
 RUN composer install --no-dev --prefer-dist --optimize-autoloader --no-progress
-# Project-owned configuration that lives in Git (Magento key point 2): config.php scopes/themes.
-COPY config/config.scopes.php /tmp/config.scopes.php
+# Project modules (app/code). Proto_DeployDemo only adds one table so that a release can exercise
+# the setup:upgrade + maintenance-mode path; remove it (and its config.php line) in real projects.
+COPY modules/ app/code/
 COPY docker/build-env.php /tmp/build-env.php
+
+# Developer tool, not part of the image: regenerate app/etc/config.php after adding/removing modules
+#   docker build --target config-export -o type=local,dest=out app/magento   (or scripts/export_magento_config.sh)
+# then copy out/config.php to app/magento/config/config.php and commit it.
+FROM source AS config-export-run
+COPY config/config.scopes.php /tmp/config.scopes.php
+RUN php bin/magento module:enable --all \
+    && php /tmp/build-env.php merge-config /tmp/config.scopes.php app/etc/config.php \
+    && cp app/etc/config.php /tmp/config.php
+FROM scratch AS config-export
+COPY --from=config-export-run /tmp/config.php /config.php
+
+FROM source AS builder
+ARG STATIC_LOCALES="en_US"
+ARG SCD_JOBS=4
+# Magento key point 2: app/etc/config.php (modules, scopes, themes, i18n) is committed to Git and
+# used as-is; the build fails if it does not list exactly the modules present in the code base.
+COPY config/config.php app/etc/config.php
 RUN set -eux; \
-    php bin/magento module:enable --all; \
-    php /tmp/build-env.php merge-config /tmp/config.scopes.php app/etc/config.php; \
+    php /tmp/build-env.php check-modules app/etc/config.php; \
     php /tmp/build-env.php write-stub app/etc/env.php; \
     php bin/magento deploy:mode:set production --skip-compilation; \
     php -d memory_limit=-1 bin/magento setup:di:compile; \

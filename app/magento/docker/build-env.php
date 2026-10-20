@@ -5,6 +5,7 @@
  *   write-stub   <env.php> [nodb]            write a placeholder env.php for di:compile/SCD (build time)
  *   render       <env.php>                   write the real env.php from environment variables (run time)
  *   hold-lock    <name> <statusfile> <pid>   take MySQL GET_LOCK(name) and hold it while <pid> lives (run time)
+ *   check-modules <config.php>               fail if config.php does not list exactly the registered modules (build time)
  * Runtime values come from ECS task secrets (AWS Secrets Manager) and SSM parameters
  * injected as environment variables (Magento key point 2). No value is baked into the image.
  */
@@ -125,6 +126,22 @@ switch ($command) {
         ];
         file_put_contents($a, export_php($env));
         chmod($a, 0640);
+        break;
+
+    case 'check-modules':
+        require 'vendor/autoload.php';
+        $registered = array_keys(\Magento\Framework\Component\ComponentRegistrar::getPaths(
+            \Magento\Framework\Component\ComponentRegistrar::MODULE));
+        $listed = array_keys((require $a)['modules'] ?? []);
+        $missing = array_values(array_diff($registered, $listed));
+        $stale = array_values(array_diff($listed, $registered));
+        if ($missing || $stale) {
+            fwrite(STDERR, "app/etc/config.php is out of date. Not listed: " . implode(', ', $missing)
+                . "; listed but not present: " . implode(', ', $stale)
+                . "\nRegenerate it (Dockerfile target config-export) and commit app/magento/config/config.php.\n");
+            exit(1);
+        }
+        echo "config.php lists all " . count($registered) . " modules\n";
         break;
 
     case 'hold-lock':

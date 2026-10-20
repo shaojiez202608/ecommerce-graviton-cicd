@@ -69,19 +69,28 @@ def test_invalid_config_rejected(tmp_path, mutate, match):
 DOCKERFILE = (ROOT / "app" / "magento" / "Dockerfile").read_text()
 
 
+def stage(name):
+    return DOCKERFILE.split(f" AS {name}\n", 1)[1].split("\nFROM ", 1)[0]
+
+
 def builder_stage():
-    return DOCKERFILE.split("FROM base AS builder", 1)[1].split("FROM base AS runtime", 1)[0]
+    return stage("builder")
 
 
 def test_key_point_1_immutable_image_build_steps_in_builder():
-    stage = builder_stage()
-    for step in ("composer install", "setup:di:compile", "setup:static-content:deploy"):
-        assert step in stage
+    assert "composer install" in stage("source")
+    assert "FROM source AS builder" in DOCKERFILE
+    for step in ("setup:di:compile", "setup:static-content:deploy"):
+        assert step in builder_stage()
     runtime = DOCKERFILE.split("FROM base AS runtime", 1)[1]
     assert "composer" not in runtime.split("COPY --from=builder", 1)[1]
 
 
-def test_key_point_2_env_php_not_in_image():
+def test_key_point_2_config_php_from_git_and_env_php_not_in_image():
+    assert "COPY config/config.php app/etc/config.php" in builder_stage()
+    assert "module:enable" not in builder_stage()  # module list comes from the committed config.php
+    assert "check-modules" in builder_stage()
+    assert "module:enable --all" in stage("config-export-run")  # developer export target only
     assert "rm -f app/etc/env.php" in builder_stage()
     entry = (ROOT / "app" / "magento" / "docker" / "entrypoint.sh").read_text()
     assert "env-tool.php render app/etc/env.php" in entry
@@ -200,3 +209,13 @@ def test_promote_refuses_protected_environments_without_break_glass():
                          env={"ECOM_CONFIG": "config/customer.json", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
                          capture_output=True, text=True, check=False)
     assert out.returncode == 2 and "refusing" in out.stderr
+
+
+def test_committed_config_php_lists_modules_and_scopes():
+    text = (ROOT / "app" / "magento" / "config" / "config.php").read_text()
+    modules = re.findall(r"'([A-Za-z0-9]+_[A-Za-z0-9]+)' => [01],", text)
+    assert len(modules) > 100 and "Magento_Store" in modules
+    assert "'scopes' =>" in text and "'themes' =>" in text
+    for name in (ROOT / "app" / "magento" / "modules").glob("*/*"):
+        if name.is_dir():
+            assert f"'{name.parent.name}_{name.name}' => 1" in text  # project modules are enabled in Git
