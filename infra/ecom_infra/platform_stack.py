@@ -36,7 +36,7 @@ from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from .cicd_stack import artifact_bucket_name
-from .config import AppConfig, EnvConfig
+from .config import SYNTH_CHECK_CERTIFICATE, AppConfig, EnvConfig
 
 WEB_PORT = 8080
 REDIS_PORT = 6379
@@ -102,8 +102,12 @@ class PlatformStack(Stack):
         self.efs_sg = sg("EfsSg", "EFS shared media/var")
         self.deploy_sg = sg("DeploySg", "In-VPC CodeBuild deploy and smoke test")
 
+        # HTTPS environments listen on 443 (80 only redirects); HTTP environments listen on 80.
+        listener_ports = (80, 443) if env_cfg.https else (80,)
+        self.site_port = 443 if env_cfg.https else 80
         for cidr in (env_cfg.vpc_cidr, *env_cfg.allowed_ingress_cidrs):
-            self.alb_sg.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), f"HTTP from {cidr}")
+            for port in listener_ports:
+                self.alb_sg.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(port), f"port {port} from {cidr}")
         self.alb_sg.add_egress_rule(self.web_sg, ec2.Port.tcp(WEB_PORT), "to web tasks")
         self.web_sg.add_ingress_rule(self.alb_sg, ec2.Port.tcp(WEB_PORT), "from ALB")
         for target, port, label in (
@@ -117,8 +121,8 @@ class PlatformStack(Stack):
         # HTTPS egress for ECR/Secrets Manager/SSM/CloudWatch via NAT; Magento itself needs no other egress.
         self.web_sg.add_egress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "AWS APIs over HTTPS via NAT")
         self.deploy_sg.add_egress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "AWS APIs over HTTPS via NAT")
-        self.deploy_sg.add_egress_rule(self.alb_sg, ec2.Port.tcp(80), "smoke test against internal ALB")
-        self.alb_sg.add_ingress_rule(self.deploy_sg, ec2.Port.tcp(80), "smoke test from deploy project")
+        self.deploy_sg.add_egress_rule(self.alb_sg, ec2.Port.tcp(self.site_port), "smoke test against internal ALB")
+        self.alb_sg.add_ingress_rule(self.deploy_sg, ec2.Port.tcp(self.site_port), "smoke test from deploy project")
 
         # ------------------------------------------------------------------ alarms topic
         self.alarm_topic = sns.Topic(
@@ -418,8 +422,21 @@ class PlatformStack(Stack):
             vpc_subnets=app_subnets, security_group=self.alb_sg, drop_invalid_header_fields=True,
         )
         self.alb.log_access_logs(alb_logs, prefix="alb")
-        self.listener = self.alb.add_listener("Http", port=80, open=False,
-                                              default_action=elbv2.ListenerAction.fixed_response(404))
+        if env_cfg.https:
+            cert_arn = env_cfg.certificate_arn
+            if cert_arn == SYNTH_CHECK_CERTIFICATE:  # template checks only; never a real certificate
+                cert_arn = self.format_arn(service="acm", resource="certificate", resource_name=cert_arn)
+            self.listener = self.alb.add_listener(
+                "Https", port=443, protocol=elbv2.ApplicationProtocol.HTTPS, open=False,
+                certificates=[elbv2.ListenerCertificate.from_arn(cert_arn)],
+                ssl_policy=elbv2.SslPolicy.RECOMMENDED_TLS,
+                default_action=elbv2.ListenerAction.fixed_response(404),
+            )
+            self.alb.add_listener("HttpRedirect", port=80, open=False, default_action=elbv2.ListenerAction.redirect(
+                protocol="HTTPS", port="443", permanent=True))
+        else:
+            self.listener = self.alb.add_listener("Http", port=80, open=False,
+                                                  default_action=elbv2.ListenerAction.fixed_response(404))
         health = elbv2.HealthCheck(path="/health_check.php", healthy_http_codes="200",
                                    interval=Duration.seconds(15), healthy_threshold_count=2)
 
@@ -437,7 +454,10 @@ class PlatformStack(Stack):
             conditions=[elbv2.ListenerCondition.path_patterns(["/*"])],
             action=elbv2.ListenerAction.forward([self.blue_tg]),
         )
-        base_url = f"{env_cfg.base_url_scheme}://{self.alb.load_balancer_dns_name}/"
+        # HTTPS: the certificate's host name (a private DNS record pointing at the internal ALB is
+        # the operator's job, see docs/handover.md). HTTP: the ALB's own DNS name.
+        site_host = env_cfg.site_hostname if env_cfg.https else self.alb.load_balancer_dns_name
+        base_url = f"{env_cfg.base_url_scheme}://{site_host}/"
         ssm_base_url.node.default_child.add_property_override("Value", base_url)
 
         # ------------------------------------------------------------------ ECS service
@@ -519,6 +539,8 @@ class PlatformStack(Stack):
                 "desiredCount": env_cfg.desired_count,
                 "deployment": env_cfg.deployment,
                 "namePrefix": n(),
+                "scheme": env_cfg.base_url_scheme,
+                "siteHost": site_host,
                 "snapshotPrefix": n("predeploy"),
             }),
         )

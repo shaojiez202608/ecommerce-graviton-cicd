@@ -216,3 +216,39 @@ def test_storage_and_bake_time_come_from_the_profile(customer):
     prod.has_resource_properties("AWS::OpenSearchService::Domain", {"EBSOptions": Match.object_like({"VolumeSize": 20})})
     prod.has_resource_properties("AWS::ECS::Service", {"DeploymentConfiguration": Match.object_like(
         {"BakeTimeInMinutes": 10})})
+
+
+def test_https_environments_listen_on_443_with_the_configured_certificate(sandbox, customer):
+    for env in ("uat", "prod"):
+        t = customer[f"proto-ecom-{env}-platform"]
+        t.has_resource_properties("AWS::ElasticLoadBalancingV2::Listener", {
+            "Port": 443, "Protocol": "HTTPS", "Certificates": Match.any_value(),
+            "SslPolicy": Match.string_like_regexp("TLS13")})
+        t.has_resource_properties("AWS::ElasticLoadBalancingV2::Listener", {
+            "Port": 80, "DefaultActions": [Match.object_like({"Type": "redirect"})]})
+        rule = next(iter(t.find_resources("AWS::ElasticLoadBalancingV2::ListenerRule").values()))
+        assert "AlbHttps" in json.dumps(rule["Properties"]["ListenerArn"])
+        meta = json.dumps(t.find_resources("AWS::SSM::Parameter"))
+        assert '\\"scheme\\":\\"https\\"' in meta and f"{env}.shop.example.com" in meta
+    for templates, env in ((customer, "dev"), (sandbox, "dev")):
+        listeners = templates[f"proto-ecom-{env}-platform"].find_resources("AWS::ElasticLoadBalancingV2::Listener")
+        assert [ln["Properties"]["Port"] for ln in listeners.values()] == [80]
+
+
+def test_https_without_certificate_is_rejected(tmp_path):
+    from ecom_infra.config import load
+    raw = json.loads((ROOT / "config" / "sandbox.json").read_text())
+    raw["environments"]["dev"].update(base_url_scheme="https", site_hostname="shop.example.com")
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="certificate_arn"):
+        load(p)
+    raw["environments"]["dev"]["certificate_arn"] = "arn:aws:acm:us-east-1:<ACCOUNT_ID>:certificate/example"
+    p.write_text(json.dumps(raw))
+    assert load(p).environments["dev"].https
+
+
+def test_smoke_test_follows_the_scheme():
+    smoke = (ROOT / "scripts" / "deploy" / "smoke_test.sh").read_text()
+    assert '--connect-to "$HOST:443:$ALB:443"' in smoke and 'BASE="https://$HOST"' in smoke
+    assert "-k" not in smoke.split() and "--insecure" not in smoke

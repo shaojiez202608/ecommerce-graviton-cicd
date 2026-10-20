@@ -67,6 +67,8 @@ switch ($command) {
         $redisPort = env_or('MAGENTO_REDIS_PORT', '6379');
         $redisPassword = env_or('MAGENTO_REDIS_PASSWORD', '');
         $baseUrl = rtrim(env_required('MAGENTO_BASE_URL'), '/') . '/';
+        // HTTPS environments: TLS ends at the ALB, Magento sees X-Forwarded-Proto (default offloader header).
+        $secure = str_starts_with($baseUrl, 'https://') ? '1' : '0';
         $env = [
             'MAGE_MODE' => 'production',
             'backend' => ['frontName' => env_or('MAGENTO_ADMIN_FRONTNAME', 'admin')],
@@ -106,7 +108,7 @@ switch ($command) {
             'system' => ['default' => [
                 'web' => [
                     'unsecure' => ['base_url' => $baseUrl],
-                    'secure' => ['base_url' => $baseUrl, 'use_in_frontend' => '0', 'use_in_adminhtml' => '0'],
+                    'secure' => ['base_url' => $baseUrl, 'use_in_frontend' => $secure, 'use_in_adminhtml' => $secure],
                 ],
                 'catalog' => ['search' => [
                     'engine' => 'opensearch',
