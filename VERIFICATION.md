@@ -18,7 +18,7 @@
 | `make scan`（gitleaks 8.30.1 全历史 + 运行时生成的假 AWS key canary） | 全历史 0 leaks；canary 被 `aws-access-token` 规则检出（证明扫描器能报错） | canary 只证明 AWS key 规则生效 |
 | `uvx zizmor --persona auditor .github/workflows` | 无发现 | workflow **未在 GitHub 上运行**，仅本地静态检查 |
 | `uvx pip-audit -r <uv export>`（107 个依赖） | No known vulnerabilities found | osv-scanner 未安装，未运行 |
-| ASH 3.7.1 `--mode local`（源为 `git archive HEAD` 干净副本，输出 `_scan_out/ecommerce_cicd/`，无 zip） | bandit PASSED（280 LOW：测试断言、`REPLACE_ME` 占位串、`subprocess` 调 AWS CLI）；checkov PASSED（2 条带理由的行内跳过）；detect-secrets PASSED；semgrep PASSED；npm-audit PASSED；**cdk-nag、cfn-nag、grype、opengrep、syft：MISSING（未运行：本机无 Docker / 未安装）** | 按规范，扫描器没跑完即视为**未通过**；缺的扫描器交给 CI 补跑。首轮 ASH 有 6 条可处理发现，已在 `922cc6f` 修复（uv 依赖冷却期、Docker 健康检查/基础镜像说明、workflow 输入、误报标注） |
+| ASH 3.7.1 `--mode local`（`c4ca7db` 与文档提交 `91385ca` 各跑一次，源为 `git archive HEAD` 干净副本，输出 `_scan_out/ecommerce_cicd/`，无 zip） | bandit PASSED（280 LOW：测试断言、`REPLACE_ME` 占位串、`subprocess` 调 AWS CLI）；checkov PASSED（2 条带理由的行内跳过）；detect-secrets PASSED；semgrep PASSED；npm-audit PASSED；**cdk-nag、cfn-nag、grype、opengrep、syft：MISSING（未运行：本机无 Docker / 未安装）** | 按规范，扫描器没跑完即视为**未通过**；缺的扫描器交给 CI 补跑。首轮 ASH 有 6 条可处理发现，已在 `922cc6f` 修复（uv 依赖冷却期、Docker 健康检查/基础镜像说明、workflow 输入、误报标注） |
 | Holmes | **未运行**：本机没有 Holmes | — |
 | `uv run python -m local.run_mcf_demo` | 跑通：outbox（101 在 EventBridge 不可用时仍推进到 SUBMITTED，事件下一轮补发）、102 两次 503 后成功、103 三次后 EXCEPTION、104 未映射 SKU、105 走 EU 客户端、106 确认丢失后以「已存在」恢复、107 带 `retry=true` 重驱成功、108 发货前取消 | mock 行为由合成收件人名驱动，不代表真实 SP-API 的返回 |
 
