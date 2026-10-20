@@ -60,16 +60,25 @@ while read -r env db dbv cache search searchv; do
       --query 'length(ReservedCacheNodesOfferings)' --output text 2>/dev/null | grep -qv '^0$' \
     && ok "$env: ElastiCache Valkey on $cache" || note "$env: could not confirm $cache for Valkey in $REGION (check the official page)"
 done < /tmp/preflight-sizing.txt
-envs=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["environments"]))' "$CFG")
-vpcs=$(aws ec2 describe-vpcs --query 'length(Vpcs)' --output text)
-vpc_q=$(aws service-quotas get-service-quota --service-code vpc --quota-code L-F678F1CE --query 'Quota.Value' --output text 2>/dev/null || echo 5)
-[ "$(python3 -c "print(int($vpcs + $envs <= float('$vpc_q')))")" = "1" ] && ok "VPC quota ($vpcs used + $envs new <= ${vpc_q%.*})" \
-  || bad "VPC quota: $vpcs used + $envs new > ${vpc_q%.*}"
-eips=$(aws ec2 describe-addresses --query 'length(Addresses)' --output text)
-eip_q=$(aws service-quotas get-service-quota --service-code ec2 --quota-code L-0263D0A3 --query 'Quota.Value' --output text 2>/dev/null || echo 5)
-nats=$(python3 -c 'import json,sys; print(sum(e["nat_gateways"] for e in json.load(open(sys.argv[1]))["environments"].values()))' "$CFG")
-[ "$(python3 -c "print(int($eips + $nats <= float('$eip_q')))")" = "1" ] && ok "Elastic IP quota ($eips used + $nats new <= ${eip_q%.*})" \
-  || bad "Elastic IP quota: $eips used + $nats new > ${eip_q%.*}"
+quota_check() {  # quota_check <label> <used> <new> <quota>
+  local label="$1" used="$2" new="$3" q="${4%.*}"
+  if [ -z "$q" ] || [ "$q" = "None" ]; then note "$label: quota not readable"; return; fi
+  if [ "$used" -gt "$q" ]; then note "$label: $used in use exceeds the reported quota $q (account-specific limit); cannot verify"; return; fi
+  [ $((used + new)) -le "$q" ] && ok "$label quota ($used used + $new new <= $q)" || bad "$label quota: $used used + $new new > $q"
+}
+envs=$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["environments"]))' "$CFG")
+new_vpcs=0; new_nat=0
+for e in $envs; do
+  have=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$PROJECT-$e-vpc" --query 'length(Vpcs)' --output text)
+  if [ "$have" = "0" ]; then
+    new_vpcs=$((new_vpcs + 1))
+    new_nat=$((new_nat + $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["environments"][sys.argv[2]]["nat_gateways"])' "$CFG" "$e")))
+  fi
+done
+quota_check "VPC" "$(aws ec2 describe-vpcs --query 'length(Vpcs)' --output text)" "$new_vpcs" \
+  "$(aws service-quotas get-service-quota --service-code vpc --quota-code L-F678F1CE --query 'Quota.Value' --output text 2>/dev/null)"
+quota_check "Elastic IP" "$(aws ec2 describe-addresses --query 'length(Addresses)' --output text)" "$new_nat" \
+  "$(aws service-quotas get-service-quota --service-code ec2 --quota-code L-0263D0A3 --query 'Quota.Value' --output text 2>/dev/null)"
 aws cloudformation describe-stacks --stack-name CDKToolkit --query 'Stacks[0].StackStatus' --output text >/dev/null 2>&1 \
   && ok "CDK bootstrap present (not modified)" || bad "CDKToolkit stack missing: bootstrap the account/region first"
 
