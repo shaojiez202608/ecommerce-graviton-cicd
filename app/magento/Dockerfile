@@ -40,6 +40,12 @@ WORKDIR /var/www/magento
 RUN git clone --depth 1 --branch "${MAGENTO_REF}" "${MAGENTO_REPO}" . && rm -rf .git
 ENV COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1
 RUN composer install --no-dev --prefer-dist --optimize-autoloader --no-progress
+# Project-level security fixes on top of Magento's lock file, found by the image scan gate:
+# - mtdowling/jmespath.php (critical advisory fixed in 2.9.1)
+# - lock files that libraries ship inside vendor/ are not used at runtime; remove them so the
+#   scanner reports the installed versions only
+RUN composer update mtdowling/jmespath.php --no-dev --no-interaction --no-progress --optimize-autoloader \
+    && find vendor -mindepth 3 -maxdepth 3 -name composer.lock -delete
 # Project modules (app/code). Proto_DeployDemo only adds one table so that a release can exercise
 # the setup:upgrade + maintenance-mode path; remove it (and its config.php line) in real projects.
 COPY modules/ app/code/
