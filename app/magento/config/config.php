@@ -223,6 +223,7 @@ return array (
     'Magento_Wishlist' => 1,
     'Magento_WishlistAnalytics' => 1,
     'Magento_WishlistGraphQl' => 1,
+    'Proto_DeployDemo' => 1,
   ),
   'scopes' => 
   array (
