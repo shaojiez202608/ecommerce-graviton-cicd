@@ -26,6 +26,13 @@ from pathlib import Path
 import boto3
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def profile_project(path: Path) -> str:
+    """Project prefix from the profile (local copy, or the committed template when there is none)."""
+    if not path.exists():
+        path = path.with_name(path.stem + ".example.json")
+    return json.loads(path.read_text())["project"]
 sys.path.insert(0, str(ROOT / "src" / "mcf"))
 sys.path.insert(0, str(ROOT / "scripts"))
 from mcf_bridge.store import DynamoRepository  # noqa: E402
@@ -142,7 +149,7 @@ def main() -> int:
     ap.add_argument("--outbox-drill", action="store_true")
     ap.add_argument("--max-wait", type=int, default=2400, help="seconds to wait for every order to settle")
     args = ap.parse_args()
-    prefix = args.stack_prefix or json.loads((ROOT / args.config).read_text())["project"]
+    prefix = args.stack_prefix or profile_project(ROOT / args.config)
     e = Env(prefix, args.env)
     run = str(int(time.time()))[-6:]
     results = {}

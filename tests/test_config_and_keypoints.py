@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def write(tmp_path, mutate):
-    raw = json.loads((ROOT / "config" / "sandbox.json").read_text())
+    raw = json.loads((ROOT / "config" / "sandbox.example.json").read_text())
     mutate(raw)
     p = tmp_path / "c.json"
     p.write_text(json.dumps(raw))
@@ -19,15 +19,15 @@ def write(tmp_path, mutate):
 
 
 def test_profiles_load():
-    customer = load(ROOT / "config" / "customer.json", synth_check=True)
+    customer = load(ROOT / "config" / "customer.example.json", synth_check=True)
     assert set(customer.environments) == {"dev", "test", "uat", "prod"}
-    assert load(ROOT / "config" / "sandbox.json").destroy_on_delete
+    assert load(ROOT / "config" / "sandbox.example.json").destroy_on_delete
 
 
 def test_customer_profile_requires_sizing_to_be_filled_in():
     with pytest.raises(ValueError, match="db_instance_class, cache_node_type, search_instance_type not set"):
-        load(ROOT / "config" / "customer.json")
-    raw = json.loads((ROOT / "config" / "customer.json").read_text())
+        load(ROOT / "config" / "customer.example.json")
+    raw = json.loads((ROOT / "config" / "customer.example.json").read_text())
     for env in raw["environments"].values():
         assert env["db_instance_class"] == env["cache_node_type"] == env["search_instance_type"] == ""
 
@@ -38,13 +38,13 @@ def test_no_instance_type_names_outside_the_sandbox_profile():
     for path in ROOT.rglob("*"):
         if (not path.is_file() or path.suffix not in (".py", ".json", ".md", ".sh", ".yml", ".php")
                 or any(part in {".venv", "cdk.out", "node_modules", ".git"} for part in path.parts)
-                or path.name == "sandbox.json"):
+                or path.name in ("sandbox.json", "sandbox.example.json")):
             continue
         assert not pattern.search(path.read_text()), path
 
 
 def test_sizing_and_thresholds_come_from_the_profile():
-    cfg = load(ROOT / "config" / "sandbox.json")
+    cfg = load(ROOT / "config" / "sandbox.example.json")
     dev = cfg.environments["dev"]
     assert dev.db_allocated_storage_gib > 0 and dev.search_volume_gib > 0
     assert dev.alarms.cpu_percent > 0 and dev.mcf.lambda_memory_mib > 0
@@ -60,6 +60,26 @@ def test_sizing_and_thresholds_come_from_the_profile():
     (lambda r: r["environments"]["dev"].update(base_url_scheme="https"), "needs certificate_arn and site_hostname"),
     (lambda r: r["environments"]["dev"].update(maintenance_on_failure="maybe"), "maintenance_on_failure"),
     (lambda r: r["environments"]["dev"]["mcf"]["marketplaces"].update(DE={"id": "X"}), "region"),
+    (lambda r: r.update(project="Proto_Ecom"), "project"),
+    (lambda r: r.update(ssm_prefix="proto-ecom"), "ssm_prefix"),
+    (lambda r: r.update(region="useast1"), "region"),
+    (lambda r: r["build"].update(alarm_email="not-an-email"), "alarm_email"),
+    (lambda r: r["tags"].pop("Teardown"), "Teardown=after-test"),
+    (lambda r: r["environments"]["dev"].update(vpc_cidr="8.8.0.0/16"), "private"),
+    (lambda r: r["environments"]["dev"].update(allowed_ingress_cidrs=["10.0.0.0/33"]), "not a CIDR"),
+    (lambda r: r["environments"]["dev"].update(task_cpu=1000), "task_cpu"),
+    (lambda r: r["environments"]["dev"].update(nat_gateways=0), "nat_gateways"),
+    (lambda r: r["environments"]["dev"].update(search_instance_type="x.medium"), "search_instance_type"),
+    (lambda r: r["environments"]["dev"].update(
+        base_url_scheme="https", site_hostname="shop.example.com",
+        certificate_arn="arn:aws:acm:eu-west-1:111122223333:certificate/00000000-0000-0000-0000-000000000000"),
+     "ACM certificates are regional"),
+    (lambda r: r["environments"]["dev"].update(
+        base_url_scheme="https", site_hostname="Bad Host", certificate_arn="arn:aws:acm:us-east-1:1:cert"),
+     "certificate_arn must be an ACM certificate ARN"),
+    (lambda r: r["environments"]["dev"]["mcf"]["marketplaces"]["US"].update(id="us"), "marketplace ID"),
+    (lambda r: r["environments"]["dev"]["mcf"].update(fulfillment_policy="Ship"), "fulfillment_policy"),
+    (lambda r: r["pipelines"][0].update(approvals_before={"prod": "x"}), "does not deploy"),
 ])
 def test_invalid_config_rejected(tmp_path, mutate, match):
     with pytest.raises(ValueError, match=match):
@@ -206,7 +226,7 @@ def test_promote_refuses_protected_environments_without_break_glass():
     import subprocess
 
     out = subprocess.run(["bash", str(ROOT / "scripts" / "promote_image.sh"), "prod", "abc"],
-                         env={"ECOM_CONFIG": "config/customer.json", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
+                         env={"ECOM_CONFIG": "config/customer.example.json", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
                          capture_output=True, text=True, check=False)
     assert out.returncode == 2 and "refusing" in out.stderr
 
@@ -219,3 +239,9 @@ def test_committed_config_php_lists_modules_and_scopes():
     for name in (ROOT / "app" / "magento" / "modules").glob("*/*"):
         if name.is_dir():
             assert f"'{name.parent.name}_{name.name}' => 1" in text  # project modules are enabled in Git
+
+
+def test_missing_profile_points_to_make_init(tmp_path):
+    (tmp_path / "x.example.json").write_text("{}")
+    with pytest.raises(FileNotFoundError, match="make init"):
+        load(tmp_path / "x.json")

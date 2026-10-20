@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def synth(profile: str, image_tag=None, nag=True, image_tags=None, only_envs=None):
     app = cdk.App(context={"@aws-cdk/customresources:installLatestAwsSdkDefault": False})
-    stacks = build_app(app, config_path=str(ROOT / "config" / f"{profile}.json"), image_tag=image_tag, nag=nag,
+    stacks = build_app(app, config_path=str(ROOT / "config" / f"{profile}.example.json"), image_tag=image_tag, nag=nag,
                        image_tags=image_tags, only_envs=only_envs,
                        synth_check=(profile == "customer"))
     return app, {name: Template.from_stack(s) for name, s in stacks.items()}
@@ -238,13 +238,13 @@ def test_https_environments_listen_on_443_with_the_configured_certificate(sandbo
 
 def test_https_without_certificate_is_rejected(tmp_path):
     from ecom_infra.config import load
-    raw = json.loads((ROOT / "config" / "sandbox.json").read_text())
+    raw = json.loads((ROOT / "config" / "sandbox.example.json").read_text())
     raw["environments"]["dev"].update(base_url_scheme="https", site_hostname="shop.example.com")
     p = tmp_path / "c.json"
     p.write_text(json.dumps(raw))
     with pytest.raises(ValueError, match="certificate_arn"):
         load(p)
-    raw["environments"]["dev"]["certificate_arn"] = "arn:aws:acm:us-east-1:<ACCOUNT_ID>:certificate/example"
+    raw["environments"]["dev"]["certificate_arn"] = "arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000000"
     p.write_text(json.dumps(raw))
     assert load(p).environments["dev"].https
 
@@ -258,7 +258,7 @@ def test_smoke_test_follows_the_scheme():
 def test_mcf_intake_timeout_covers_the_batch_and_queue_visibility(sandbox, customer):
     from ecom_infra.config import load
     for profile, templates in (("sandbox", sandbox), ("customer", customer)):
-        mcf = load(ROOT / "config" / f"{profile}.json", synth_check=True).environments["dev"].mcf
+        mcf = load(ROOT / "config" / f"{profile}.example.json", synth_check=True).environments["dev"].mcf
         t = templates["proto-ecom-dev-mcf"]
         fn = next(f for f in t.find_resources("AWS::Lambda::Function").values()
                   if f["Properties"].get("Handler") == "mcf_bridge.handlers.order_intake")["Properties"]
@@ -329,8 +329,8 @@ def test_nag_acknowledgements_are_attached_to_specific_constructs():
     from ecom_infra.nag import Ack, acknowledgements
 
     app = cdk.App(context={"@aws-cdk/customresources:installLatestAwsSdkDefault": False})
-    stacks = build_app(app, config_path=str(ROOT / "config" / "customer.json"), nag=False, synth_check=True)
-    cfg = load(ROOT / "config" / "customer.json", synth_check=True)
+    stacks = build_app(app, config_path=str(ROOT / "config" / "customer.example.json"), nag=False, synth_check=True)
+    cfg = load(ROOT / "config" / "customer.example.json", synth_check=True)
     for name, stack in stacks.items():
         env = cfg.environments.get(getattr(stack, "env_name", "") or "")
         pairs = acknowledgements(stack, cfg, env)

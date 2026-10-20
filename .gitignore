@@ -12,3 +12,6 @@ cdk.context.json
 .env
 *.log
 .DS_Store
+# Real configuration is a local copy of the committed templates (make init)
+config/*.json
+!config/*.example.json

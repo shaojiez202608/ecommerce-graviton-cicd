@@ -21,6 +21,13 @@ import boto3
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def profile_project(path: Path) -> str:
+    """Project prefix from the profile (local copy, or the committed template when there is none)."""
+    if not path.exists():
+        path = path.with_name(path.stem + ".example.json")
+    return json.loads(path.read_text())["project"]
+
+
 def redrive(sqs, dlq_url: str, queue_url: str, order_ids: set[str] | None = None, dry_run: bool = False) -> list[str]:
     moved: list[str] = []
     seen: set[str] = set()
@@ -59,7 +66,7 @@ def main() -> int:
     ap.add_argument("--order-id", action="append", default=None)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    project = json.loads((ROOT / args.config).read_text())["project"]
+    project = profile_project(ROOT / args.config)
     sqs = boto3.client("sqs")
     queue = sqs.get_queue_url(QueueName=f"{project}-{args.env}-mcf-intake")["QueueUrl"]
     dlq = sqs.get_queue_url(QueueName=f"{project}-{args.env}-mcf-intake-dlq")["QueueUrl"]

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
@@ -19,7 +21,32 @@ SIZING_HELP = (
 )
 # Used only with synth_check=True (template/cdk-nag checks of a profile whose certificate is not known yet).
 SYNTH_CHECK_CERTIFICATE = "synth-check-placeholder"
-SANDBOX_PROFILE = Path(__file__).resolve().parents[2] / "config" / "sandbox.json"
+SANDBOX_PROFILE = Path(__file__).resolve().parents[2] / "config" / "sandbox.example.json"
+
+# Input validation (fails at synth time, before anything is deployed).
+RE_PROJECT = re.compile(r"^[a-z][a-z0-9-]{2,18}[a-z0-9]$")  # keeps derived names within service limits
+RE_SSM_PREFIX = re.compile(r"^/[a-z0-9][a-z0-9/_-]{0,63}$")
+RE_REGION = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-\d$")
+RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.IGNORECASE)
+RE_CERT_ARN = re.compile(r"^arn:aws[a-z-]*:acm:([a-z0-9-]+):\d{12}:certificate/[0-9a-f-]{36}$")
+RE_HOSTNAME = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+RE_MARKETPLACE_ID = re.compile(r"^[A-Z0-9]{10,14}$")
+RE_DB_CLASS = re.compile(r"^(db\.)?[a-z][a-z0-9]*\.[a-z0-9]+$")
+RE_CACHE_NODE = re.compile(r"^cache\.[a-z][a-z0-9]*\.[a-z0-9]+$")
+RE_SEARCH_TYPE = re.compile(r"^[a-z][a-z0-9]*\.[a-z0-9]+\.search$")
+RE_ENGINE_VERSION = re.compile(r"^\d+\.\d+(\.\d+)?$")
+RE_TAG_KEY = re.compile(r"^[A-Za-z0-9 _.:/=+@-]{1,128}$")
+FARGATE_CPU = (256, 512, 1024, 2048, 4096, 8192, 16384)
+
+
+def resolve_profile(path: str | Path) -> Path:
+    """Profiles are templates in Git (config/*.example.json); the real file is a local copy."""
+    p = Path(path)
+    if p.exists():
+        return p
+    example = p.with_name(p.stem + ".example.json")
+    hint = f"; run `make init` to copy {example}" if example.exists() else ""
+    raise FileNotFoundError(f"configuration file {p} not found{hint}")
 
 
 @dataclass(frozen=True)
@@ -185,6 +212,7 @@ def _env(name: str, raw: dict, synth_check: bool, sizing_fallback: dict) -> EnvC
     elif blanks:
         raise ValueError(f"{name}: {', '.join(blanks)} not set; {SIZING_HELP}")
 
+    _validate_env(name, env)
     if env.deployment not in VALID_DEPLOYMENTS:
         raise ValueError(f"{name}: deployment must be one of {VALID_DEPLOYMENTS}")
     if env.deployment == "blue_green" and env.desired_count < 1:
@@ -213,6 +241,81 @@ def _env(name: str, raw: dict, synth_check: bool, sizing_fallback: dict) -> EnvC
     return env
 
 
+def _validate_env(name: str, env: EnvConfig) -> None:
+    errors = []
+    try:
+        net = ipaddress.ip_network(env.vpc_cidr)
+        if not net.is_private or net.prefixlen > 20:
+            errors.append(f"vpc_cidr {env.vpc_cidr} must be a private /20 or larger network")
+    except ValueError:
+        errors.append(f"vpc_cidr {env.vpc_cidr!r} is not a CIDR")
+    for cidr in env.allowed_ingress_cidrs:
+        try:
+            ipaddress.ip_network(cidr)
+        except ValueError:
+            errors.append(f"allowed_ingress_cidrs entry {cidr!r} is not a CIDR")
+    if not 1 <= env.nat_gateways <= env.max_azs:
+        errors.append("nat_gateways must be between 1 and max_azs (tasks need egress to AWS APIs)")
+    if env.task_cpu not in FARGATE_CPU:
+        errors.append(f"task_cpu must be one of {FARGATE_CPU} (Fargate CPU units)")
+    for fld, rx in (("db_instance_class", RE_DB_CLASS), ("cache_node_type", RE_CACHE_NODE),
+                    ("search_instance_type", RE_SEARCH_TYPE)):
+        if not rx.match(getattr(env, fld)):
+            errors.append(f"{fld} {getattr(env, fld)!r} has an unexpected format")
+    if not RE_ENGINE_VERSION.match(env.db_engine_version) or not RE_ENGINE_VERSION.match(env.cache_engine_version):
+        errors.append("db_engine_version / cache_engine_version must look like 8.4.11 / 8.1")
+    if not env.search_engine_version.startswith("OpenSearch_"):
+        errors.append("search_engine_version must look like OpenSearch_<major>.<minor>")
+    if env.https and env.certificate_arn and env.certificate_arn != SYNTH_CHECK_CERTIFICATE \
+            and not RE_CERT_ARN.match(env.certificate_arn):
+        errors.append("certificate_arn must be an ACM certificate ARN")
+    if env.site_hostname and env.site_hostname != f"{name}.shop.example.com" and not RE_HOSTNAME.match(env.site_hostname):
+        errors.append(f"site_hostname {env.site_hostname!r} is not a host name")
+    for key, m in env.mcf.marketplaces.items():
+        if not RE_MARKETPLACE_ID.match(m.marketplace_id):
+            errors.append(f"mcf.marketplaces.{key}.id {m.marketplace_id!r} is not a marketplace ID")
+    if env.mcf.fulfillment_policy not in ("FillOrKill", "FillAll", "FillAllAvailable"):
+        errors.append("mcf.fulfillment_policy must be FillOrKill, FillAll or FillAllAvailable")
+    if env.mcf.spapi_http_timeout_seconds < 1 or env.mcf.tracking_poll_minutes < 1 or env.mcf.inventory_sync_minutes < 1:
+        errors.append("mcf timeouts and intervals must be positive")
+    if errors:
+        raise ValueError(f"{name}: " + "; ".join(errors))
+
+
+def _validate_app(raw: dict, cfg: AppConfig) -> None:
+    errors = []
+    if not RE_PROJECT.match(cfg.project):
+        errors.append(f"project {cfg.project!r} must match {RE_PROJECT.pattern}")
+    if not RE_SSM_PREFIX.match(cfg.ssm_prefix):
+        errors.append(f"ssm_prefix {cfg.ssm_prefix!r} must match {RE_SSM_PREFIX.pattern}")
+    if not RE_REGION.match(cfg.region):
+        errors.append(f"region {cfg.region!r} is not a region name")
+    if cfg.build.alarm_email and not RE_EMAIL.match(cfg.build.alarm_email):
+        errors.append("build.alarm_email is not an e-mail address")
+    if not set(cfg.build.block_on_severities) <= {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL", "UNDEFINED"}:
+        errors.append("build.block_on_severities has an unknown severity")
+    if "Project" not in cfg.tags or not all(RE_TAG_KEY.match(k) and RE_TAG_KEY.match(v) for k, v in cfg.tags.items()):
+        errors.append("tags must include Project and use valid tag keys/values")
+    if cfg.destroy_on_delete and cfg.tags.get("Teardown") != "after-test":
+        errors.append("removal_policy=destroy profiles must carry the tag Teardown=after-test")
+    for env in cfg.environments.values():
+        if env.certificate_arn and env.certificate_arn != SYNTH_CHECK_CERTIFICATE:
+            m = RE_CERT_ARN.match(env.certificate_arn)
+            if m and m.group(1) != cfg.region:
+                errors.append(f"{env.name}: certificate_arn must be in {cfg.region} (ACM certificates are regional)")
+    names = [p.name for p in cfg.pipelines]
+    if len(names) != len(set(names)):
+        errors.append("pipeline names must be unique")
+    for p in cfg.pipelines:
+        for env in p.approvals_before:
+            if env not in p.environments:
+                errors.append(f"pipeline {p.name}: approval before {env}, which the pipeline does not deploy")
+    if "prod" in cfg.environments and cfg.destroy_on_delete:
+        errors.append("a profile with a prod environment must use removal_policy=retain")
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 def _sizing_fallback() -> dict:
     """Synth-check only: borrow the sandbox profile's sizing so a blank profile can be synthesized."""
     dev = json.loads(SANDBOX_PROFILE.read_text())["environments"]["dev"]
@@ -226,7 +329,7 @@ def load(path: str | Path, *, synth_check: bool = False) -> AppConfig:
     fields with placeholders, so a not-yet-filled profile can be synthesized and checked with cdk-nag.
     Templates produced that way are not deployable as-is (the placeholder certificate does not exist).
     """
-    raw = json.loads(Path(path).read_text())
+    raw = json.loads(resolve_profile(path).read_text())
     fallback = _sizing_fallback() if synth_check else {}
     envs = {}
     for name, value in raw["environments"].items():
@@ -262,7 +365,7 @@ def load(path: str | Path, *, synth_check: bool = False) -> AppConfig:
         raise ValueError("build.scan_unavailable_action must be fail or warn")
     if raw["removal_policy"] not in ("destroy", "retain"):
         raise ValueError("removal_policy must be destroy or retain")
-    return AppConfig(
+    cfg = AppConfig(
         project=raw["project"],
         region=raw["region"],
         removal_policy=raw["removal_policy"],
@@ -272,6 +375,8 @@ def load(path: str | Path, *, synth_check: bool = False) -> AppConfig:
         pipelines=tuple(pipelines),
         environments=envs,
     )
+    _validate_app(raw, cfg)
+    return cfg
 
 
 def env_field_names() -> set[str]:
