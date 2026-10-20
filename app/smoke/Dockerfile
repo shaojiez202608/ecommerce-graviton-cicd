@@ -2,6 +2,7 @@
 # ordering and rollback without a full Magento build. It is NOT Magento: the migrate,
 # cache-flush and maintenance entrypoints only print what the Magento image would do.
 ARG PHP_IMAGE=public.ecr.aws/docker/library/php:8.3-fpm-bookworm
+# checkov:skip=CKV_DOCKER_7: the base image comes from a build argument whose default and profile value are pinned tags
 FROM ${PHP_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends nginx-light && rm -rf /var/lib/apt/lists/*
 COPY nginx.conf /etc/nginx/nginx.conf
@@ -16,4 +17,6 @@ RUN chmod 0755 /usr/local/bin/magento-* && echo "${IMAGE_REVISION}" > /var/www/m
     && mkdir -p /tmp/nginx && chown -R www-data:www-data /tmp/nginx /var/www/magento
 USER www-data
 EXPOSE 8080
+# Health is checked by the ALB target group (/health_check.php), not by Docker.
+HEALTHCHECK NONE
 ENTRYPOINT ["/usr/local/bin/magento-entrypoint"]

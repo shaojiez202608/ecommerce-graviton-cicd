@@ -2,12 +2,7 @@
 # approval, with short-lived credentials from GitHub OIDC (no stored keys).
 name: deploy-verify
 on:
-  workflow_dispatch:
-    inputs:
-      destroy:
-        description: Destroy the stacks and run the residual check at the end
-        type: boolean
-        default: true
+  workflow_dispatch: # manual only; no inputs, so nothing user-supplied reaches the build
 permissions: {} # no workflow-level permissions; the job below asks for what it needs
 concurrency:
   group: deploy-verify
@@ -54,11 +49,11 @@ jobs:
       - name: Verify
         run: make verify
       - name: Destroy
-        if: ${{ always() && inputs.destroy }}
+        if: ${{ always() }}
         env:
           CONFIRM_DESTROY: proto-ecom
           CONFIRM_DATA: "yes"
         run: make destroy
       - name: Residual check
-        if: ${{ always() && inputs.destroy }}
+        if: ${{ always() }}
         run: make verify-cleanup

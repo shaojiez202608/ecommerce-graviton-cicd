@@ -86,8 +86,9 @@ PLATFORM: list[Ack] = [
     Ack("LogRetention*/ServiceRole/DefaultPolicy/Resource", "IAM5[Resource::*]", "CDK log-retention handler: "
         "logs:PutRetentionPolicy/DeleteRetentionPolicy on log groups created later by RDS (names not known "
         "at synth time)."),
-    Ack("AWS679f53fac002430cb0da5b7982bd2287/ServiceRole/Resource", LAMBDA_BASIC, "CDK AwsCustomResource "
-        "singleton (OpenSearch log resource policy); the AWS managed policy only grants CloudWatch Logs write."),
+    # The id below is CDK's fixed AwsCustomResource singleton name, not a secret.
+    Ack("AWS679f53fac002430cb0da5b7982bd2287/ServiceRole/Resource",  # pragma: allowlist secret
+        LAMBDA_BASIC, "CDK AwsCustomResource singleton (OpenSearch log resource policy); the AWS managed policy only grants CloudWatch Logs write."),
     Ack("Search/ESLogGroupPolicy*/CustomResourcePolicy/Resource", "IAM5[Resource::*]", LOGS_CR_REASON),
     Ack("WebTask/ExecutionRole/DefaultPolicy/Resource", "IAM5[Resource::*]", ECR_AUTH_REASON),
     Ack("OpsTask/ExecutionRole/DefaultPolicy/Resource", "IAM5[Resource::*]", ECR_AUTH_REASON),
@@ -164,7 +165,7 @@ MCF: list[Ack] = [
     *[Ack(f"{fn}/ServiceRole/DefaultPolicy/Resource", "IAM5[Resource::<State1C20CC9A.Arn>/index/*]",
           "CDK grantReadWriteData adds the table's own indexes (gsi1 state/mapping, gsi2 outbox).")
       for fn in ("IntakeFn", "TrackingFn", "InventoryFn")],
-    Ack("AWS679f53fac002430cb0da5b7982bd2287/ServiceRole/Resource", LAMBDA_BASIC, "CDK AwsCustomResource "
+    Ack("AWS679f53fac002430cb0da5b7982bd2287/ServiceRole/Resource", LAMBDA_BASIC, "CDK AwsCustomResource "  # pragma: allowlist secret
         "singleton (EventBridge -> CloudWatch Logs resource policy); only CloudWatch Logs write."),
     Ack("EventsLogGroupPolicy*/CustomResourcePolicy/Resource", "IAM5[Resource::*]", LOGS_CR_REASON),
 ]

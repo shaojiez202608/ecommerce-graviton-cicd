@@ -6,6 +6,7 @@
 ARG PHP_IMAGE=public.ecr.aws/docker/library/php:8.3-fpm-bookworm
 ARG COMPOSER_IMAGE=public.ecr.aws/docker/library/composer:2
 
+# checkov:skip=CKV_DOCKER_7: the base image comes from a build argument whose default and profile value are pinned tags
 FROM ${COMPOSER_IMAGE} AS composer
 
 FROM ${PHP_IMAGE} AS base
