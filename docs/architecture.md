@@ -73,7 +73,7 @@ flowchart LR
   1. **ECS 层**：滚动更新的断路器在新任务起不来或健康检查失败时回到上一个 COMPLETED 部署；蓝绿在绿组不健康时不切流量。部署脚本检查 PRIMARY 部署是否为新修订且 COMPLETED，否则让阶段失败（随后按上一条处理维护模式）。
   2. **流水线层**：每个 Deploy 阶段配置 `OnFailure: ROLLBACK`，CodePipeline 用该阶段上一次成功执行的产物重新执行该阶段（即上一镜像 tag，同样先迁移检查再切换）。
   3. **手工**：`scripts/rollback.sh <ENV> [task-def-arn]` 只把服务指回指定修订，不碰数据库。
-- **数据库迁移不可逆**：回滚到旧镜像不会撤销 schema。旧镜像的迁移检查遇到它不认识的新表/新模块时的实际行为见 `VERIFICATION.md`（沙箱实测）；schema 不兼容时应从迁移前快照恢复（uat/prod 每次部署前自动快照并保留最近 `predeploy_snapshots_keep` 个，dev/test 不打）。
+- **数据库迁移不可逆**：回滚到旧镜像不会撤销 schema。沙箱中回滚到旧 Magento 镜像被部署前扫描复查拦下，旧镜像遇到新 schema 时迁移检查的行为未实测；不经迁移的服务级回滚（`rollback.sh`）让旧代码运行在新 schema 上，健康检查通过（`VERIFICATION.md` §2.2）；schema 不兼容时应从迁移前快照恢复（uat/prod 每次部署前自动快照并保留最近 `predeploy_snapshots_keep` 个，dev/test 不打）。
 
 ## 4. MCF 履约桥接（独立站 ↔ Amazon MCF）
 

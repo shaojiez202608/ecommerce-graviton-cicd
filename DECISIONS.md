@@ -17,7 +17,7 @@
 | D-11 | 两条流水线：develop→dev；release→test→审批①→uat→审批②→prod。每条流水线内一次构建，所有环境用同一 SHA 镜像 | 一条流水线串四环境 | 对齐「dev 由 develop 自动、test 由 release 自动」的分支规则，同时保持「一次构建逐环境晋级」 |
 | D-12 | 部署动作用 VPC 内的 CodeBuild 执行脚本，而不是 CodePipeline 的 ECS 部署动作 | ECS deploy action / CodeDeploy | 需要严格顺序：注册新修订 → 单个迁移任务 → 更新服务 → cache:flush → 冒烟。ECS 部署动作不能先跑一次性任务 |
 | D-13 | dev/test 滚动更新 + 断路器自动回滚；uat/prod 用 ECS 原生蓝绿（bake time） | CodeDeploy 蓝绿 | 原生蓝绿不需要 CodeDeploy 应用与部署组；CDK L2 已支持（`DeploymentStrategy.BLUE_GREEN`） |
-| D-14 | 部署阶段配置 CodePipeline 阶段回滚（OnFailure=ROLLBACK） | 仅手工回滚 | 回到该阶段最后一次成功执行的产物（上一镜像 tag）；数据库迁移不可逆，跨 schema 变更的回滚会在迁移步骤失败并停下（fail-safe），由人恢复快照 |
+| D-14 | 部署阶段配置 CodePipeline 阶段回滚（OnFailure=ROLLBACK） | 仅手工回滚 | 回到该阶段最后一次成功执行的产物（上一镜像 tag），同样先经过部署前扫描复查与迁移检查。数据库迁移不可逆：沙箱中回滚到旧 Magento 镜像被扫描复查拦下，旧代码遇到新 schema 时迁移检查的行为未实测（VERIFICATION §2.2）；schema 不兼容时应从迁移前快照恢复 |
 | D-15 | uat/prod 在迁移前自动打 RDS 快照；dev/test 不打 | 全部打 | 沙箱验证后要清理干净，快照会成为残留；dev/test 数据可重建 |
 | D-16 | `var/` 与 `pub/media` 放 EFS（访问点 + IAM 授权 + 传输加密） | 只放 `pub/media` | 维护标志 `var/.maintenance.flag` 必须对所有 Web 任务可见，迁移时的维护模式才生效 |
 | D-17 | ECS 服务在该环境没有镜像 tag 时 desiredCount=0；tag 按环境传入（`-c imageTags=dev=<TAG>,...`；`-c imageTag` 只在只合成一个环境时接受）；部署脚本成功后把当前 tag 写入 SSM `<SSM_PREFIX>/<ENV>/current_image_tag` | 用公共占位镜像先跑起来；一个 `imageTag` 作用于所有环境 | 避免首次部署拉取不存在的镜像而卡住 CFN；避免把一个环境的 tag 误用到其他环境。重跑 `cdk deploy` 前从 SSM 读出各环境当前 tag |
