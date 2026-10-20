@@ -57,7 +57,7 @@ flowchart LR
 |---|---|---|
 | 1. 不可变镜像 | `app/magento/Dockerfile`（builder 阶段）、`buildspec/build.yml` | `composer install --no-dev`、`setup:di:compile`、`setup:static-content:deploy` 都在构建阶段执行；为了不连数据库，构建时写入一个不含真实连接的 `env.php` 存根并把 `scopes/themes` 合并进 `config.php`，构建结束删除存根。镜像 tag = commit SHA，ECR 设为不可变 tag；同一 SHA 已存在则复用，不重复构建 |
 | 2. 配置分离 | `app/magento/config/config.scopes.php`（进 Git）、`app/magento/docker/build-env.php render`、ECS secrets | `config.php` 类内容进 Git；`env.php` 在容器启动时由环境变量渲染。数据库/OpenSearch/Valkey 凭证与 crypt key 来自 Secrets Manager，`base_url`、后台路径来自 SSM 参数（`/<prefix>/<env>/...`），均通过 ECS `secrets` 注入；`base_url` 写入 `env.php` 的 `system` 段 |
-| 3. 数据库迁移单点执行 | `app/magento/docker/migrate.sh`、`scripts/deploy/ecs_deploy.sh` | 部署脚本在更新服务**之前**启动**一个**一次性 ECS 任务：空库时 `setup:install`；否则 `setup:db:status` 判断，需要升级才开维护模式执行 `setup:upgrade --keep-generated`。`var/` 在 EFS 上，维护标志对所有 Web 任务可见。脚本发现已有运行中的 ops 任务就拒绝启动；流水线执行模式为 QUEUED，同一条流水线不会并发执行同一阶段。Web 容器入口从不执行迁移 |
+| 3. 数据库迁移单点执行 | `app/magento/docker/migrate.sh`、`scripts/deploy/ecs_deploy.sh` | 部署脚本在更新服务**之前**启动**一个**一次性 ECS 任务：先用主用户确保最小权限的应用库用户存在（主用户凭证只注入这个任务），空库时 `setup:install`；否则 `setup:db:status` 判断，需要升级才开维护模式执行 `setup:upgrade --keep-generated`。`var/` 在 EFS 上，维护标志对所有 Web 任务可见。脚本发现已有运行中的 ops 任务就拒绝启动；流水线执行模式为 QUEUED，同一条流水线不会并发执行同一阶段。Web 容器入口从不执行迁移 |
 | 4. 零停机与缓存 | `platform_stack.py`、`ecs_deploy.sh` | dev/test：滚动更新（最小健康 100%）+ 断路器自动回滚；uat/prod：ECS 原生蓝绿（绿组验证、切换生产监听规则、bake time 内保留蓝组）。服务稳定后再跑一次性 `cache:flush` 任务（缓存与整页缓存在共享 Valkey 中） |
 
 ## 3. 多环境晋级、审批与回滚
@@ -95,7 +95,8 @@ SP-API 调用层：`MockSpApiClient`（默认，状态存 DynamoDB，可跨 Lamb
 
 - Magento 店铺侧模块（发布 `Order Paid`、消费发货/库存事件、发货邮件）未实现，只定义了事件契约（Q-05）。
 - 未做性能测试、容量规划与成本评估；`config/*.json` 中的实例规格是占位值。
-- `migrate.sh` 中 `setup:install` 的 `--db-ssl-*`、`--opensearch-*` 参数与 Valkey `tls://` 写法未在本次部署中验证（以 `VERIFICATION.md` 为准）。
+- 沙箱只验证了「空库安装」与「无 schema 变更的再部署」两条迁移分支；「需要 `setup:upgrade` + 维护模式」的分支只有脚本与守护测试，未在 AWS 上触发过。
+- 账号级注册表若使用增强扫描，首次扫描可能长时间不出结果；沙箱中没有拿到任何漏洞结果（`VERIFICATION.md` §2）。
 - 媒体与 `var/` 放 EFS；未做 CDN、跨区域与对象存储媒体方案（Q-09）。
 - Cron（`bin/magento cron:run`）、消息队列消费者未部署；生产需要单独的定时任务/服务。
 - 后台管理入口、TLS 证书、WAF 未配置（ALB 仅内部 HTTP）。

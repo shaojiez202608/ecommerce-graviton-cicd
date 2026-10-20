@@ -33,3 +33,5 @@
 | D-27 | 本地无 Docker：完整镜像只在 CodeBuild arm64 构建；沙箱流水线默认构建 smoke 镜像，Magento 镜像另行触发一次构建验证 | 本地构建 | 本机 Docker daemon 未启动；smoke 镜像用于验证流水线/迁移顺序/回滚，Magento 构建结果单独记录 |
 | D-28 | 扫描门禁兼容账号级「增强扫描（Amazon Inspector）」：轮询 `DescribeImageScanFindings` 至 COMPLETE/ACTIVE；超时视为「扫描结果不可用」。交付配置 `scan_unavailable_action=fail`（拒绝晋级），沙箱配置 `warn`（记录告警后继续） | 一律 fail | 沙箱账号的注册表扫描类型由账号所有者设为增强扫描，覆盖仓库级 scan-on-push，首次扫描可能长时间 PENDING；不修改账号级配置。只要拿到结果，有阻断级别的发现一律失败 |
 | D-29 | 构建角色可只读源桶，以便运维人员在流水线外按需构建某个变体（例如 magento） | 不授予，只能经流水线构建 | 便于验证 Magento 变体而不改流水线；权限只读且限于源桶 |
+| D-30 | Magento 使用单独的应用库用户（Secrets Manager 生成，迁移任务用主用户创建并授予本 schema 全部权限）；Web 任务拿不到主用户凭证 | 直接用 RDS 主用户 | 实测 RDS for MySQL 8.4 主用户的权限经角色授予，Magento 的安装前权限检查不通过；同时更符合最小权限 |
+| D-31 | 提供 `scripts/promote_image.sh`：用环境的部署项目把已存在的镜像 tag 晋级到单个环境（同一脚本、同一顺序） | 只允许经流水线 | 沙箱验证 Magento 变体需要；生产中作为应急手段，需要权限控制与审计 |

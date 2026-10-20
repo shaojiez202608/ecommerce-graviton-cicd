@@ -14,7 +14,7 @@ scripts/check_residuals.sh proto-ecom us-east-1     # 只读核对，按名称�
 | 资源 | 原因 | 处理 |
 |---|---|---|
 | 流水线注册的 ECS 任务定义修订 | 由部署脚本注册，不归 CloudFormation 管 | `aws ecs list-task-definitions --family-prefix proto-ecom-` 后逐个 `deregister-task-definition` 再 `delete-task-definitions` |
-| CodeBuild/Lambda 自动创建的日志组 | 若日志组不是栈创建的（如 CDK 自定义资源） | `aws logs describe-log-groups` 按前缀/名字核对后删除 |
+| 非栈创建的日志组 | RDS 日志导出（`/aws/rds/instance/proto-ecom-<env>-mysql/*`，由 CDK LogRetention 设置保留期后默认保留）、CDK 自定义资源 Lambda（`/aws/lambda/proto-ecom-*-Custom*` 等） | `aws logs describe-log-groups` 按名字核对后逐个删除 |
 | Secrets Manager | 删除后默认进入计划删除窗口 | 沙箱可用 `aws secretsmanager delete-secret --force-delete-without-recovery --secret-id <name>`（只针对 `proto-ecom-` 前缀） |
 | RDS 迁移前快照 | 只有开启 `snapshot_before_migrate` 的环境会创建（沙箱 dev 未开启） | `aws rds delete-db-snapshot` |
 | VPC 内 Lambda/CodeBuild 网卡 | 删除 VPC 时偶尔需要等待 ENI 释放 | 重试 destroy |

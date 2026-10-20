@@ -5,6 +5,7 @@
 - 每个 CodeBuild 项目、Lambda、ECS 任务有独立角色；授权范围到具体资源（ECR 仓库、表、总线、服务、任务定义族、SSM 路径）。
 - 部署项目 `iam:PassRole` 只针对本环境任务角色/执行角色，且附 `iam:PassedToService=ecs-tasks.amazonaws.com` 条件；`ecs:RunTask` 附 `ecs:cluster` 条件。
 - MCF Lambda 只有在 `spapi_mode=live` 时才被授予读取 SP-API Secret 的权限。
+- 数据库：Web 任务只使用应用库用户（仅 `magento` schema 权限）；RDS 主用户凭证只注入一次性迁移任务。
 - 不创建 IAM 用户与长期访问密钥。
 
 ## 网络

@@ -4,19 +4,19 @@
 
 | # | 依赖 / 组件 | 本原型使用 | arm64 支持（官方依据） | 实测 |
 |---|---|---|---|---|
-| G-01 | 计算：ECS on Fargate | `runtimePlatform.cpuArchitecture=ARM64` | Fargate Linux 容器支持 ARM64（F-05） | 见 DEPLOYMENT-LOG「ECS 任务」 |
-| G-02 | PHP 8.3-fpm 运行时镜像 | `public.ecr.aws/docker/library/php:8.3-fpm-bookworm` | Docker 官方镜像提供 arm64v8；ECR Public 镜像清单含 arm64（F-23）；Graviton 指南：PHP 8.2+ 表现良好（F-03） | 见 VERIFICATION「镜像构建」 |
-| G-03 | PHP 扩展（bcmath、gd、intl、pdo_mysql、soap、sockets、sodium、xsl、zip、opcache、ftp） | `docker-php-ext-install` 在 arm64 构建机上从源码编译 | 官方镜像提供 `docker-php-ext-*` 构建工具，与架构无关；无预编译 x86 二进制依赖 | 见 VERIFICATION「镜像构建」 |
-| G-04 | Composer 2 | `public.ecr.aws/docker/library/composer:2`（只取 `/usr/bin/composer`，PHP 脚本） | 官方镜像提供 arm64v8（F-23） | 同上 |
-| G-05 | nginx | Debian bookworm `nginx-light` 包 | Debian arm64 官方仓库包；基础镜像为 arm64 | 同上 |
-| G-06 | Magento Open Source 2.4.8 代码与 Composer 依赖 | 从官方 Git 仓库构建 | 纯 PHP；Adobe 系统要求页未声明 CPU 架构（F-02）。若加入含原生扩展的第三方模块，需逐个确认 | 见 VERIFICATION「镜像构建」（Magento 变体） |
+| G-01 | 计算：ECS on Fargate | `runtimePlatform.cpuArchitecture=ARM64` | Fargate Linux 容器支持 ARM64（F-05） | 已运行：Web 服务与一次性迁移/缓存任务均在 ARM64 Fargate 上运行，冒烟响应 `arch=aarch64` |
+| G-02 | PHP 8.3-fpm 运行时镜像 | `public.ecr.aws/docker/library/php:8.3-fpm-bookworm` | Docker 官方镜像提供 arm64v8；ECR Public 镜像清单含 arm64（F-23）；Graviton 指南：PHP 8.2+ 表现良好（F-03） | 已运行：在 arm64 CodeBuild 上构建，运行时报告 PHP 8.3.35 |
+| G-03 | PHP 扩展（bcmath、gd、intl、pdo_mysql、soap、sockets、sodium、xsl、zip、opcache、ftp） | `docker-php-ext-install` 在 arm64 构建机上从源码编译 | 官方镜像提供 `docker-php-ext-*` 构建工具，与架构无关；无预编译 x86 二进制依赖 | 已运行：全部扩展在 aarch64 上编译通过，`setup:install` 的扩展检查通过 |
+| G-04 | Composer 2 | `public.ecr.aws/docker/library/composer:2`（只取 `/usr/bin/composer`，PHP 脚本） | 官方镜像提供 arm64v8（F-23） | 已运行：`composer install --no-dev` 成功 |
+| G-05 | nginx | Debian bookworm `nginx-light` 包 | Debian arm64 官方仓库包；基础镜像为 arm64 | 已运行：ALB 健康检查与首页 200 |
+| G-06 | Magento Open Source 2.4.8 代码与 Composer 依赖 | 从官方 Git 仓库构建 | 纯 PHP；Adobe 系统要求页未声明 CPU 架构（F-02）。若加入含原生扩展的第三方模块，需逐个确认 | 已运行：2.4.8-p5 在 arm64 上完成 `setup:di:compile`、`setup:static-content:deploy`、`setup:install`，首页 200 |
 | G-07 | 数据库：RDS for MySQL 8.4 | Graviton 实例族（`config` 中 `db.*g.*` 占位值） | RDS 支持 Graviton 实例（F-04）；MySQL 8.4 可选 Graviton 实例族（F-15）；Magento 2.4.8 要求 MySQL 8.4（F-02） | 见 DEPLOYMENT-LOG |
-| G-08 | 缓存/会话：ElastiCache for Valkey 8.1 | `cache.*g.*` 节点、TLS + AUTH | Valkey 当前代节点包含 Graviton 实例族（F-15） | 见 DEPLOYMENT-LOG |
-| G-09 | 搜索：Amazon OpenSearch Service 3.1 | `*.search` Graviton 实例（占位） | 服务支持 Graviton 实例（F-04）；3.x 可选 Graviton 实例族（F-15）；2.4.8 要求 OpenSearch 3（F-02） | 见 DEPLOYMENT-LOG |
-| G-10 | 构建：CodeBuild | `ARM_CONTAINER` + `aws/codebuild/amazonlinux-aarch64-standard:3.0`，特权模式 docker build | F-07、F-08 | 见 VERIFICATION「流水线」 |
-| G-11 | 函数：Lambda（MCF 桥接） | `python3.14`、`arm64`，仅用标准库 + 运行时自带 boto3 | 所有受支持运行时都支持 arm64（F-06） | 见 DEPLOYMENT-LOG「MCF」 |
-| G-12 | 镜像仓库：ECR | 单架构 arm64 镜像 | ECR 支持多架构清单（F-04）；本原型只推 arm64 | 见 VERIFICATION |
-| G-13 | 共享文件：EFS | `pub/media`、`var/` | 与客户端 CPU 架构无关（NFS） | 见 DEPLOYMENT-LOG |
+| G-08 | 缓存/会话：ElastiCache for Valkey 8.1 | `cache.*g.*` 节点、TLS + AUTH | Valkey 当前代节点包含 Graviton 实例族（F-15） | 已运行：Graviton 节点，`tls://` + AUTH 下会话/缓存/整页缓存可用，`cache:flush` 成功 |
+| G-09 | 搜索：Amazon OpenSearch Service 3.1 | `*.search` Graviton 实例（占位） | 服务支持 Graviton 实例（F-04）；3.x 可选 Graviton 实例族（F-15）；2.4.8 要求 OpenSearch 3（F-02） | 已运行：Graviton 实例 + OpenSearch 3.1 + FGAC，`setup:install` 的搜索引擎校验通过 |
+| G-10 | 构建：CodeBuild | `ARM_CONTAINER` + `aws/codebuild/amazonlinux-aarch64-standard:3.0`，特权模式 docker build | F-07、F-08 | 已运行：构建日志 `arch=aarch64`；VPC 内部署项目同样为 ARM |
+| G-11 | 函数：Lambda（MCF 桥接） | `python3.14`、`arm64`，仅用标准库 + 运行时自带 boto3 | 所有受支持运行时都支持 arm64（F-06） | 已运行：三个函数端到端（VERIFICATION §4） |
+| G-12 | 镜像仓库：ECR | 单架构 arm64 镜像 | ECR 支持多架构清单（F-04）；本原型只推 arm64 | 已运行：推送/拉取正常 |
+| G-13 | 共享文件：EFS | `pub/media`、`var/` | 与客户端 CPU 架构无关（NFS） | 已运行：访问点 + IAM 授权 + 传输加密挂载成功 |
 | G-14 | CDK 自带的自定义资源 Lambda（S3 自动清空、日志保留、OpenSearch 日志策略等） | CDK 生成 | 由 CDK 决定架构，未强制 arm64 | 记入 SECURITY-NOTES「已知例外」 |
 
 ## 调优点（只列做法，不给数字）

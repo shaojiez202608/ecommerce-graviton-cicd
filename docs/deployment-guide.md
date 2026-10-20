@@ -54,6 +54,16 @@ npx -y aws-cdk@2 deploy proto-ecom-dev-platform -c config=config/sandbox.json -c
 
 实例类与大小：配置里的值只是沙箱占位值。选择请以官方页面为准（链接见 `docs/graviton-compatibility.md` 末尾）。费用按各服务计费维度产生（Fargate vCPU/内存时长、RDS 实例时长与存储、ElastiCache 节点时长、OpenSearch 实例时长与存储、NAT 网关时长与流量、CodeBuild 构建分钟等），以各服务官方定价页为准。
 
+## 手工晋级已有镜像（沙箱验证 / 应急）
+
+```bash
+scripts/promote_image.sh dev <image-tag>      # 用 dev 的部署项目执行同一部署脚本
+```
+
+## 扫描门禁
+
+构建后轮询 ECR 扫描结果（基础扫描或账号级增强扫描）。`build.scan_timeout_seconds` 内拿不到结果时按 `build.scan_unavailable_action` 处理：`fail` 拒绝晋级（交付默认），`warn` 记录后继续（沙箱）。拿到结果且命中 `block_on_severities` 时一律失败。
+
 ## 切换到 Magento 完整镜像
 
 把 `build.image_variant` 改为 `magento`，重新部署 cicd 栈，再上传一次源码。Magento 构建会从 GitHub 拉取官方仓库并执行 composer，需要构建机可访问公网。
