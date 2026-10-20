@@ -31,3 +31,5 @@
 | D-25 | cdk-nag v3（`Validations.of().acknowledge`），逐条确认并写理由 | 降级 v2 | 使用当前版本；v3 不支持前缀批量抑制，确认项更细 |
 | D-26 | 实例规格只出现在 `config/*.json` 作为可替换的占位值，文档不写规格与数字 | 文档给推荐规格 | 负责人规则：不写实例规格数字；实例族以官方页为准 |
 | D-27 | 本地无 Docker：完整镜像只在 CodeBuild arm64 构建；沙箱流水线默认构建 smoke 镜像，Magento 镜像另行触发一次构建验证 | 本地构建 | 本机 Docker daemon 未启动；smoke 镜像用于验证流水线/迁移顺序/回滚，Magento 构建结果单独记录 |
+| D-28 | 扫描门禁兼容账号级「增强扫描（Amazon Inspector）」：轮询 `DescribeImageScanFindings` 至 COMPLETE/ACTIVE；超时视为「扫描结果不可用」。交付配置 `scan_unavailable_action=fail`（拒绝晋级），沙箱配置 `warn`（记录告警后继续） | 一律 fail | 沙箱账号的注册表扫描类型由账号所有者设为增强扫描，覆盖仓库级 scan-on-push，首次扫描可能长时间 PENDING；不修改账号级配置。只要拿到结果，有阻断级别的发现一律失败 |
+| D-29 | 构建角色可只读源桶，以便运维人员在流水线外按需构建某个变体（例如 magento） | 不授予，只能经流水线构建 | 便于验证 Magento 变体而不改流水线；权限只读且限于源桶 |

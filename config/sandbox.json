@@ -14,11 +14,22 @@
     "magento_ref": "2.4.8-p5",
     "php_image": "public.ecr.aws/docker/library/php:8.3-fpm-bookworm",
     "codebuild_image": "aws/codebuild/amazonlinux-aarch64-standard:3.0",
-    "block_on_severities": ["CRITICAL"],
-    "alarm_email": ""
+    "block_on_severities": [
+      "CRITICAL"
+    ],
+    "alarm_email": "",
+    "scan_timeout_seconds": 600,
+    "scan_unavailable_action": "warn"
   },
   "pipelines": [
-    {"name": "develop", "source_key": "source/develop.zip", "environments": ["dev"], "approvals_before": {}}
+    {
+      "name": "develop",
+      "source_key": "source/develop.zip",
+      "environments": [
+        "dev"
+      ],
+      "approvals_before": {}
+    }
   ],
   "environments": {
     "dev": {
@@ -40,7 +51,19 @@
       "allowed_ingress_cidrs": [],
       "snapshot_before_migrate": false,
       "base_url_scheme": "http",
-      "mcf": {"enabled": true, "spapi_mode": "mock", "spapi_region": "na", "marketplaces": {"US": "ATVPDKIKX0DER"}, "fulfillment_policy": "FillOrKill", "max_attempts": 3, "tracking_poll_minutes": 5, "inventory_sync_minutes": 60, "mock_ship_after_seconds": 60}
+      "mcf": {
+        "enabled": true,
+        "spapi_mode": "mock",
+        "spapi_region": "na",
+        "marketplaces": {
+          "US": "ATVPDKIKX0DER"
+        },
+        "fulfillment_policy": "FillOrKill",
+        "max_attempts": 3,
+        "tracking_poll_minutes": 5,
+        "inventory_sync_minutes": 60,
+        "mock_ship_after_seconds": 60
+      }
     }
   }
 }

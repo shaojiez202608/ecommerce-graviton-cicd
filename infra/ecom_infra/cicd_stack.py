@@ -76,12 +76,17 @@ class CicdStack(Stack):
                 "MAGENTO_REF": codebuild.BuildEnvironmentVariable(value=cfg.build.magento_ref),
                 "PHP_IMAGE": codebuild.BuildEnvironmentVariable(value=cfg.build.php_image),
                 "BLOCK_SEVERITIES": codebuild.BuildEnvironmentVariable(value=",".join(cfg.build.block_on_severities)),
+                "SCAN_TIMEOUT_SECONDS": codebuild.BuildEnvironmentVariable(value=str(cfg.build.scan_timeout_seconds)),
+                "SCAN_UNAVAILABLE_ACTION": codebuild.BuildEnvironmentVariable(value=cfg.build.scan_unavailable_action),
             },
             build_spec=codebuild.BuildSpec.from_source_filename("buildspec/build.yml"),
             logging=codebuild.LoggingOptions(cloud_watch=codebuild.CloudWatchLoggingOptions(log_group=build_logs)),
             timeout=Duration.minutes(120),
         )
         self.repo.grant_pull_push(self.build_project)
+        # Lets operators start a one-off build of a specific uploaded source (e.g. the Magento
+        # variant) outside the pipeline; read-only, source bucket only.
+        self.source_bucket.grant_read(self.build_project)
         self.build_project.add_to_role_policy(iam.PolicyStatement(
             actions=["ecr:DescribeImages", "ecr:DescribeImageScanFindings"],
             resources=[self.repo.repository_arn],

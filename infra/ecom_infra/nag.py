@@ -31,6 +31,8 @@ COMMON: dict[str, str] = {
 BY_KIND: dict[str, dict[str, str]] = {
     "cicd": {
         **CDK_S3_GRANTS,
+        "IAM5[Resource::<SourceBucketDDD2130A.Arn>/*]": "Read-only object access to the source bucket for "
+        "operator-started one-off builds.",
         "IAM5[Resource::<ArtifactBucket7410C9EF.Arn>/*]": "Pipeline and CodeBuild need object access inside "
         "the pipeline artifact bucket only.",
         "IAM5[Resource::*]": "ecr:GetAuthorizationToken, ecr-public:GetAuthorizationToken, inspector2:List* and "

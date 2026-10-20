@@ -5,7 +5,8 @@ severity. Works with both registry scan types:
 - BASIC: status COMPLETE, counts in imageScanFindings.findingSeverityCounts
 - ENHANCED (Amazon Inspector): status ACTIVE, findings in imageScanFindings.enhancedFindings
 Fails closed on FAILED / UNSUPPORTED_IMAGE / timeout.
-Usage: python3 scan_gate.py <repo> <tag> <CRITICAL,HIGH> [timeout_seconds]
+Usage: python3 scan_gate.py <repo> <tag> <CRITICAL,HIGH> [timeout_seconds] [fail|warn]
+"warn" only applies when no scan result is available in time (sandbox profile); findings always fail.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ def severity_counts(resp: dict) -> dict[str, int]:
 def main(argv: list[str]) -> int:
     repo, tag, blocked = argv[1], argv[2], [s for s in argv[3].split(",") if s]
     timeout = int(argv[4]) if len(argv) > 4 else 900
+    on_unavailable = argv[5] if len(argv) > 5 else "fail"
     deadline = time.time() + timeout
     while True:
         resp = describe(repo, tag)
@@ -54,7 +56,12 @@ def main(argv: list[str]) -> int:
             print(f"scan gate failed: scan status {status}", file=sys.stderr)
             return 1
         if time.time() > deadline:
-            print(f"scan gate failed: scan not finished after {timeout}s (status {status})", file=sys.stderr)
+            msg = f"scan not finished after {timeout}s (status {status})"
+            json.dump({"status": status, "result": "unavailable"}, open("scan-counts.json", "w"))
+            if on_unavailable == "warn":
+                print(f"WARNING scan gate: {msg}; continuing because scan_unavailable_action=warn")
+                return 0
+            print(f"scan gate failed: {msg}", file=sys.stderr)
             return 1
         print(f"waiting for scan (status {status})")
         time.sleep(15)

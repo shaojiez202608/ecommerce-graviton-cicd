@@ -17,7 +17,9 @@
       "CRITICAL",
       "HIGH"
     ],
-    "alarm_email": ""
+    "alarm_email": "",
+    "scan_timeout_seconds": 1800,
+    "scan_unavailable_action": "fail"
   },
   "pipelines": [
     {

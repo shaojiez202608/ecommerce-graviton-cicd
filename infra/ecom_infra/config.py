@@ -64,6 +64,8 @@ class BuildConfig:
     codebuild_image: str
     block_on_severities: tuple[str, ...]
     alarm_email: str
+    scan_timeout_seconds: int = 900
+    scan_unavailable_action: str = "fail"
 
 
 @dataclass(frozen=True)
@@ -134,7 +136,11 @@ def load(path: str | Path) -> AppConfig:
         codebuild_image=b["codebuild_image"],
         block_on_severities=tuple(b.get("block_on_severities", ["CRITICAL", "HIGH"])),
         alarm_email=b.get("alarm_email", ""),
+        scan_timeout_seconds=int(b.get("scan_timeout_seconds", 900)),
+        scan_unavailable_action=b.get("scan_unavailable_action", "fail"),
     )
+    if build.scan_unavailable_action not in ("fail", "warn"):
+        raise ValueError("build.scan_unavailable_action must be fail or warn")
     if raw["removal_policy"] not in ("destroy", "retain"):
         raise ValueError("removal_policy must be destroy or retain")
     return AppConfig(
