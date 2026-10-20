@@ -9,13 +9,14 @@
 # Usage: ecs_deploy.sh <env> <imageDetail.json>
 set -euo pipefail
 ENV_NAME="$1"; DETAIL="$2"
-PREFIX="${SSM_PREFIX:-/proto-ecom}"
+PREFIX="${SSM_PREFIX:?SSM_PREFIX must be set (environment variable of the deploy project)}"
 IMAGE_URI=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["imageUri"])' "$DETAIL")
 META=$(aws ssm get-parameter --name "$PREFIX/$ENV_NAME/deploy" --query Parameter.Value --output text)
 j() { python3 -c 'import json,sys; v=json.loads(sys.argv[1])[sys.argv[2]]; print(",".join(v) if isinstance(v,list) else v)' "$META" "$1"; }
 CLUSTER=$(j cluster); SERVICE=$(j service); WEB_FAMILY=$(j webFamily); OPS_FAMILY=$(j opsFamily)
 SUBNETS=$(j subnets); SG=$(j securityGroup); DB=$(j dbInstance); SNAP=$(j snapshotBeforeMigrate)
-DESIRED=$(j desiredCount)
+DESIRED=$(j desiredCount); NAME_PREFIX=$(j namePrefix); SNAP_PREFIX=$(j snapshotPrefix)
+OPS_STARTED_BY="${NAME_PREFIX}-ops"
 echo "[deploy] env=$ENV_NAME image=$IMAGE_URI cluster=$CLUSTER service=$SERVICE"
 
 register() {  # family -> new task definition ARN with the container image replaced
@@ -37,13 +38,13 @@ PY
 run_once() {  # ops task with a command; waits and fails on non-zero exit
   local td="$1" cmd="$2" label="$3"
   local running
-  running=$(aws ecs list-tasks --cluster "$CLUSTER" --started-by "proto-ecom-ops" --desired-status RUNNING --query 'length(taskArns)' --output text)
+  running=$(aws ecs list-tasks --cluster "$CLUSTER" --started-by "$OPS_STARTED_BY" --desired-status RUNNING --query 'length(taskArns)' --output text)
   if [ "$running" != "0" ]; then echo "[deploy] another ops task is running; refusing to start a concurrent $label" >&2; exit 1; fi
   local overrides
   overrides=$(printf '{"containerOverrides":[{"name":"web","command":["%s"]}]}' "$cmd")
   local arn
   arn=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$td" --launch-type FARGATE --count 1 \
-    --started-by "proto-ecom-ops" \
+    --started-by "$OPS_STARTED_BY" \
     --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
     --overrides "$overrides" --query 'tasks[0].taskArn' --output text)
   echo "[deploy] $label task: ${arn##*/}"
@@ -59,7 +60,7 @@ WEB_TD=$(register "$WEB_FAMILY"); OPS_TD=$(register "$OPS_FAMILY")
 echo "[deploy] web=$WEB_TD ops=$OPS_TD"
 
 if [ "$SNAP" = "True" ] || [ "$SNAP" = "true" ]; then
-  SNAP_ID="proto-ecom-${ENV_NAME}-predeploy-$(date -u +%Y%m%d%H%M%S)"
+  SNAP_ID="${SNAP_PREFIX}-$(date -u +%Y%m%d%H%M%S)"  # matches the IAM grant on <prefix>-<env>-predeploy-*
   aws rds create-db-snapshot --db-instance-identifier "$DB" --db-snapshot-identifier "$SNAP_ID" >/dev/null
   aws rds wait db-snapshot-available --db-snapshot-identifier "$SNAP_ID"
   echo "[deploy] snapshot $SNAP_ID ready"

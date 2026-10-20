@@ -2,9 +2,10 @@
 # Operator tool: promote an image tag that already exists in ECR to one environment by running
 # that environment's deploy project outside the pipeline (same scripts, same ordering).
 # Intended for sandbox verification and break-glass use; normal promotion goes through the pipeline.
-# Usage: scripts/promote_image.sh <env> <image-tag> [project]
+# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/promote_image.sh <env> <image-tag>
 set -euo pipefail
-ENV_NAME="$1"; TAG="$2"; PROJECT="${3:-proto-ecom}"
+ENV_NAME="$1"; TAG="$2"
+source "$(dirname "$0")/lib/prefix.sh"
 ROOT=$(git rev-parse --show-toplevel)
 REPO_URI=$(aws cloudformation describe-stacks --stack-name "$PROJECT-cicd" \
   --query "Stacks[0].Outputs[?OutputKey=='RepositoryUri'].OutputValue" --output text)

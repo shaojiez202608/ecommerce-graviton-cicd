@@ -185,3 +185,18 @@ def test_secrets_injected_not_plain_env(sandbox):
     assert not any("PASSWORD" in n or "KEY" in n for n in env_names)
     assert "MAGENTO_ADMIN_PASSWORD" not in secret_names  # only the one-off ops task gets admin creds
     assert "MAGENTO_DB_MASTER_PASSWORD" not in secret_names  # web tasks use the app user only
+
+
+def test_scripts_do_not_hard_code_the_prefix():
+    for path in (ROOT / "scripts").rglob("*"):
+        if path.is_file() and path.suffix in (".sh", ".py"):
+            assert "proto-ecom" not in path.read_text(), path
+
+
+def test_snapshot_name_and_iam_grant_share_the_configured_prefix():
+    _, templates = synth("customer", image_tag="abc123")
+    t = json.dumps(templates["proto-ecom-uat-platform"].to_json())
+    # deploy script names snapshots "<snapshotPrefix>-<timestamp>"; IAM allows "<project>-<env>-predeploy-*"
+    assert '\\"snapshotPrefix\\":\\"proto-ecom-uat-predeploy\\"' in t
+    assert ":snapshot:proto-ecom-uat-predeploy-*" in t
+    assert '\\"namePrefix\\":\\"proto-ecom-uat\\"' in t

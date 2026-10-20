@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Post-deploy smoke test from inside the VPC against the internal ALB.
 set -euo pipefail
-ENV_NAME="$1"; PREFIX="${SSM_PREFIX:-/proto-ecom}"
+ENV_NAME="$1"; PREFIX="${SSM_PREFIX:?SSM_PREFIX must be set (environment variable of the deploy project)}"
 META=$(aws ssm get-parameter --name "$PREFIX/$ENV_NAME/deploy" --query Parameter.Value --output text)
 ALB=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["albDns"])' "$META")
 for path in /health_check.php /; do

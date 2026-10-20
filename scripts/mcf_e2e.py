@@ -1,7 +1,7 @@
 """Deployed MCF bridge end-to-end check (mock SP-API): seed SKU map, publish synthetic
 'Order Paid' events, run inventory sync and tracking polls, print final states.
 
-    uv run python scripts/mcf_e2e.py --env dev [--stack-prefix proto-ecom]
+    uv run python scripts/mcf_e2e.py --env dev [--config config/sandbox.json] [--stack-prefix <project>]
 Only touches resources of the named stack; prints no account identifiers.
 """
 
@@ -27,9 +27,12 @@ def outputs(cfn, stack):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", default="dev")
-    ap.add_argument("--stack-prefix", default="proto-ecom")
+    ap.add_argument("--config", default="config/sandbox.json", help="profile whose 'project' is the stack prefix")
+    ap.add_argument("--stack-prefix", default=None, help="overrides the profile's project prefix")
     ap.add_argument("--wait", type=int, default=150, help="seconds to wait for the mock to ship/deliver")
     args = ap.parse_args()
+    if not args.stack_prefix:
+        args.stack_prefix = json.loads((ROOT / args.config).read_text())["project"]
     stack = f"{args.stack_prefix}-{args.env}-mcf"
     out = outputs(boto3.client("cloudformation"), stack)
     table = boto3.resource("dynamodb").Table(out["StateTableName"])

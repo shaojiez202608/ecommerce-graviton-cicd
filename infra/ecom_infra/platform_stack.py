@@ -1,6 +1,6 @@
 """Per-environment runtime: VPC, RDS for MySQL, ElastiCache (Valkey), OpenSearch, EFS, ECS on
 Fargate ARM64 (Graviton), internal ALB, monitoring, and the in-VPC deploy project used by the
-pipeline. One stack per environment: proto-ecom-<env>-platform.
+pipeline. One stack per environment: <project>-<env>-platform.
 """
 
 from __future__ import annotations
@@ -516,6 +516,8 @@ class PlatformStack(Stack):
                 "snapshotBeforeMigrate": env_cfg.snapshot_before_migrate,
                 "desiredCount": env_cfg.desired_count,
                 "deployment": env_cfg.deployment,
+                "namePrefix": n(),
+                "snapshotPrefix": n("predeploy"),
             }),
         )
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Manual rollback of the web service to a previous task definition revision (no DB change).
-# Usage: scripts/rollback.sh <env> [task-definition-arn]   (default: previous revision)
+# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/rollback.sh <env> [task-definition-arn]
+#        (default target: previous revision; prefixes come from the profile, see scripts/lib/prefix.sh)
 # Database migrations are forward-only: if the bad release changed the schema, restore the
 # pre-deploy snapshot instead (uat/prod take one automatically). See docs/handover.md.
 set -euo pipefail
-ENV_NAME="$1"; TARGET="${2:-}"; PREFIX="${SSM_PREFIX:-/proto-ecom}"
+ENV_NAME="$1"; TARGET="${2:-}"
+source "$(dirname "$0")/lib/prefix.sh"; PREFIX="$SSM_PREFIX"
 META=$(aws ssm get-parameter --name "$PREFIX/$ENV_NAME/deploy" --query Parameter.Value --output text)
 j() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$META" "$1"; }
 CLUSTER=$(j cluster); SERVICE=$(j service); FAMILY=$(j webFamily)
