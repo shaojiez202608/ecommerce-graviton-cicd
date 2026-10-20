@@ -44,11 +44,8 @@ switch ($command) {
             'MAGE_MODE' => 'production',
             'install' => ['date' => 'Thu, 01 Jan 2026 00:00:00 +0000'],
             'crypt' => ['key' => 'build-time-placeholder-not-used-at-runtime'],
-            'db' => ['table_prefix' => '', 'connection' => ['default' => [
-                'host' => 'build-placeholder', 'dbname' => 'none', 'username' => 'none', 'password' => '',
-                'model' => 'mysql4', 'engine' => 'innodb', 'initStatements' => 'SET NAMES utf8;', 'active' => '1',
-            ]]],
-            'resource' => ['default_setup' => ['connection' => 'default']],
+            // No 'db' section on purpose: without it DeploymentConfig::isDbAvailable() is false and
+            // theme/scope data is read from config.php instead of the database.
             'backend' => ['frontName' => 'admin'],
         ]));
         break;
