@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 import subprocess
 import sys
 import time
@@ -45,7 +46,8 @@ def describe(repo: str, tag: str) -> dict:
         if out.returncode != 0:
             if "ScanNotFoundException" in out.stderr:
                 return {"imageScanStatus": {"status": "PENDING"}}
-            raise SystemExit(f"describe-image-scan-findings failed: {out.stderr.strip()[:500]}")
+            err = re.sub(r"\b\d{12}\b", "111122223333", out.stderr.strip()[:500])  # no account IDs in logs
+            raise SystemExit(f"describe-image-scan-findings failed: {err}")
         page = json.loads(out.stdout)
         merged = merged or page
         f = page.get("imageScanFindings") or {}
