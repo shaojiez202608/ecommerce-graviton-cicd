@@ -130,8 +130,9 @@ switch ($command) {
 
     case 'check-modules':
         require 'vendor/autoload.php';
-        $registered = array_keys(\Magento\Framework\Component\ComponentRegistrar::getPaths(
-            \Magento\Framework\Component\ComponentRegistrar::MODULE));
+        // getPaths() is an instance method; registrations are static, so a fresh instance sees them.
+        $registrar = new \Magento\Framework\Component\ComponentRegistrar();
+        $registered = array_keys($registrar->getPaths(\Magento\Framework\Component\ComponentRegistrar::MODULE));
         $listed = array_keys((require $a)['modules'] ?? []);
         $missing = array_values(array_diff($registered, $listed));
         $stale = array_values(array_diff($listed, $registered));
