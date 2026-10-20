@@ -4,7 +4,7 @@
 # Usage: scripts/check_residuals.sh [prefix] [region]
 set -uo pipefail
 P="${1:-proto-ecom}"; R="${2:-${AWS_REGION:-us-east-1}}"; export AWS_REGION="$R"
-q() { printf '%-28s %s\n' "$1" "${2:-<none>}"; }
+q() { local v="${2:-}"; [ -z "$v" ] || [ "$v" = "None" ] && v="<none>"; printf '%-28s %s\n' "$1" "$v"; }
 q "region" "$R"
 q "cfn stacks" "$(aws cloudformation list-stacks --query "StackSummaries[?starts_with(StackName,'$P') && StackStatus!='DELETE_COMPLETE'].[StackName,StackStatus]" --output text | tr '\n' ' ')"
 q "tagged resources" "$(aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=ecommerce-graviton-cicd --query 'ResourceTagMappingList[].ResourceARN' --output text | sed -E 's/[0-9]{12}/<ACCOUNT_ID>/g' | tr '\t' '\n' | sed 's/^/\n    /' | tr -d '\n')"

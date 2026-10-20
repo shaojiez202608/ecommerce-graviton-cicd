@@ -36,4 +36,37 @@
 
 ## 4. 销毁
 
-见下方 §5、§6（销毁完成后填写）。
+| 时间 | 命令 | 结果 |
+|---|---|---|
+| 14:15:37 → 14:40:27 | `npx -y aws-cdk@2 destroy --all -c config=config/sandbox.json --force` | `proto-ecom-cicd`、`proto-ecom-dev-platform`、`proto-ecom-dev-mcf` 全部 destroyed，无 DELETE_FAILED |
+| 14:3x | 手工清理栈外资源：ECS 任务定义修订 `proto-ecom-dev-web:2–5,7–11`、`proto-ecom-dev-ops:2–5,7–11` 先 `deregister-task-definition` 再 `delete-task-definitions`（共 22 个，0 失败） | 状态 DELETE_IN_PROGRESS（ECS 的删除终态） |
+| 14:4x | 手工删除栈外日志组 10 个：`/aws/rds/instance/proto-ecom-dev-mysql/{error,slowquery}`（RDS 日志导出）、`/aws/ecs/containerinsights/proto-ecom-dev-cluster/performance`、7 个 `/aws/lambda/proto-ecom-*`（CDK 自定义资源处理函数） | 全部删除 |
+
+## 5. 残留核对（`scripts/check_residuals.sh proto-ecom us-east-1`，14:56:45，按名称前缀与 `Project` 标签）
+
+| 类别 | 结果 |
+|---|---|
+| CloudFormation 栈 | 无 |
+| S3 桶（含对象与版本） | 无（源桶、产物桶、ALB 日志桶由 CDK 清空后随栈删除；桶不存在即无残留版本） |
+| 日志组 | 无（§4 手工删除后） |
+| KMS 密钥 | 未创建客户管理密钥（全部使用 AWS 托管加密）；按标签查询无结果，无计划删除状态的密钥 |
+| ECR 仓库与镜像 | 无（`empty_on_delete` 清空后删除） |
+| IAM 角色 / 本地策略 | 无 |
+| Lambda | 无 |
+| API Gateway | 无（本项目未创建） |
+| RDS 实例 / 手工快照 / 自动快照 / 参数组 / 子网组 | 无（沙箱 dev 未开启迁移前快照；删除时不留最终快照、删除自动备份） |
+| OpenSearch 域 | 无 |
+| ElastiCache 复制组 / 快照 / 子网组 | 无 |
+| EFS | 无 |
+| ECS 集群 / 服务 / 任务定义 | 集群与服务为 INACTIVE（ECS 保留已删除对象的只读记录）；任务定义全部 DELETE_IN_PROGRESS |
+| VPC / NAT / EIP / ALB / 目标组 | 无（NAT 状态 deleted） |
+| Secrets Manager（含计划删除） | 无 |
+| SSM 参数、SQS、SNS、EventBridge 总线、DynamoDB、CodeBuild、CodePipeline、告警 | 无 |
+| AgentCore 相关资源 | 不适用（本项目未使用） |
+| 标签索引 | `resourcegroupstaggingapi` 仍列出若干已删除资源的 ARN（任务定义 DELETE_IN_PROGRESS、NAT=deleted、流日志不存在、集群/服务 INACTIVE），均已逐个确认处于删除终态，属标签索引延迟 |
+
+不归本项目独占、因此**未删除**的：CDK bootstrap 资产桶中由本次部署上传的 7 个按内容哈希命名的对象（模板与 Lambda 代码包；CDK 内置处理函数的代码包可能与其他项目共用同一键，且负责人要求不得修改 CDKToolkit）。
+
+## 6. 结论
+
+仍有残留：CDK bootstrap 资产桶中由本次部署上传的 7 个资产对象（模板与 Lambda 代码包）。原因：该桶属于 CDKToolkit，负责人要求不得修改；对象按内容哈希命名，CDK 内置处理函数的代码包可能与账号内其他项目共用。除此之外，本项目创建的全部资源已删除（§5 逐类核对）。
