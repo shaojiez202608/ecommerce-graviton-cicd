@@ -245,3 +245,27 @@ def test_missing_profile_points_to_make_init(tmp_path):
     (tmp_path / "x.example.json").write_text("{}")
     with pytest.raises(FileNotFoundError, match="make init"):
         load(tmp_path / "x.json")
+
+
+def test_scan_gate_reads_every_page(monkeypatch):
+    mod = load_gate()
+    pages = [
+        {"imageScanStatus": {"status": "ACTIVE"}, "nextToken": "p2",
+         "imageScanFindings": {"findingSeverityCounts": {"HIGH": 1}, "enhancedFindings": [{"severity": "HIGH"}]}},
+        {"imageScanStatus": {"status": "ACTIVE"},
+         "imageScanFindings": {"findingSeverityCounts": {"CRITICAL": 1}, "enhancedFindings": [{"severity": "CRITICAL"}]}},
+    ]
+    calls = []
+
+    class Out:
+        def __init__(self, data):
+            self.returncode, self.stdout, self.stderr = 0, json.dumps(data), ""
+
+    def fake_run(cmd, **_):
+        calls.append(cmd)
+        return Out(pages[len(calls) - 1])
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    resp = mod.describe("repo", "tag")
+    assert len(calls) == 2 and "--next-token" in calls[1]
+    assert mod.severity_counts(resp) == {"HIGH": 1, "CRITICAL": 1}  # the critical finding is on page 2

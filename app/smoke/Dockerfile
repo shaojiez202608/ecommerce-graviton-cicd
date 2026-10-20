@@ -4,7 +4,9 @@
 ARG PHP_IMAGE=public.ecr.aws/docker/library/php:8.3-fpm-bookworm
 # checkov:skip=CKV_DOCKER_7: the base image comes from a build argument whose default and profile value are pinned tags
 FROM ${PHP_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends nginx-light && rm -rf /var/lib/apt/lists/*
+# Debian security updates on top of the base image, then nginx.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends nginx-light && rm -rf /var/lib/apt/lists/*
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY pub/ /var/www/magento/pub/
 COPY entrypoint.sh /usr/local/bin/magento-entrypoint

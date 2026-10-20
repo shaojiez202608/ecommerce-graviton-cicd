@@ -26,24 +26,46 @@ BAD = {"FAILED", "UNSUPPORTED_IMAGE", "FINDINGS_UNAVAILABLE", "SCAN_ELIGIBILITY_
 
 
 def describe(repo: str, tag: str) -> dict:
-    out = subprocess.run(
-        ["aws", "ecr", "describe-image-scan-findings", "--repository-name", repo,
-         "--image-id", f"imageTag={tag}", "--output", "json"],
-        capture_output=True, text=True, check=False,
-    )
-    if out.returncode != 0:
-        if "ScanNotFoundException" in out.stderr:
-            return {"imageScanStatus": {"status": "PENDING"}}
-        raise SystemExit(f"describe-image-scan-findings failed: {out.stderr.strip()[:500]}")
-    return json.loads(out.stdout)
+    """All pages of describe-image-scan-findings merged into one response.
+
+    Findings are paginated (and for enhanced scanning findingSeverityCounts only covers the
+    returned page), so every page is read before counting.
+    """
+    merged: dict = {}
+    findings: list = []
+    enhanced: list = []
+    token = None
+    while True:
+        cmd = ["aws", "ecr", "describe-image-scan-findings", "--repository-name", repo,
+               "--image-id", f"imageTag={tag}", "--no-paginate", "--max-results", "1000", "--output", "json"]
+        if token:
+            cmd += ["--next-token", token]
+        out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if out.returncode != 0:
+            if "ScanNotFoundException" in out.stderr:
+                return {"imageScanStatus": {"status": "PENDING"}}
+            raise SystemExit(f"describe-image-scan-findings failed: {out.stderr.strip()[:500]}")
+        page = json.loads(out.stdout)
+        merged = merged or page
+        f = page.get("imageScanFindings") or {}
+        findings += f.get("findings") or []
+        enhanced += f.get("enhancedFindings") or []
+        token = page.get("nextToken")
+        if not token:
+            break
+    if findings or enhanced:
+        merged.setdefault("imageScanFindings", {})
+        merged["imageScanFindings"]["findings"] = findings
+        merged["imageScanFindings"]["enhancedFindings"] = enhanced
+    return merged
 
 
 def severity_counts(resp: dict) -> dict[str, int]:
     findings = resp.get("imageScanFindings") or {}
-    counts = dict(findings.get("findingSeverityCounts") or {})
-    if not counts and findings.get("enhancedFindings"):
-        counts = dict(collections.Counter(f.get("severity", "UNTRIAGED") for f in findings["enhancedFindings"]))
-    return counts
+    items = (findings.get("findings") or []) + (findings.get("enhancedFindings") or [])
+    if items:  # count every finding across all pages
+        return dict(collections.Counter(f.get("severity", "UNTRIAGED") for f in items))
+    return dict(findings.get("findingSeverityCounts") or {})
 
 
 def aws(*args: str) -> subprocess.CompletedProcess:

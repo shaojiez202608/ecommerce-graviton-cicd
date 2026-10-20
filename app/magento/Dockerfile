@@ -10,8 +10,11 @@ ARG COMPOSER_IMAGE=public.ecr.aws/docker/library/composer:2
 FROM ${COMPOSER_IMAGE} AS composer
 
 FROM ${PHP_IMAGE} AS base
+# Apply Debian security updates on top of the base image (the scan gate blocks images whose
+# OS packages have fixable critical findings).
 RUN set -eux; \
     apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends; \
     apt-get install -y --no-install-recommends \
       libfreetype6-dev libjpeg62-turbo-dev libpng-dev libwebp-dev libicu-dev libxslt1-dev \
       libzip-dev libsodium-dev libonig-dev libxml2-dev nginx-light ca-certificates default-mysql-client; \
