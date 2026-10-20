@@ -48,6 +48,7 @@ RUN set -eux; \
     php bin/magento deploy:mode:set production --skip-compilation; \
     php -d memory_limit=-1 bin/magento setup:di:compile; \
     php /tmp/build-env.php write-stub app/etc/env.php nodb; \
+    rm -rf var/cache/* var/page_cache/*; \
     php -d memory_limit=-1 bin/magento setup:static-content:deploy -f --jobs "${SCD_JOBS}" \
       --area frontend --theme Magento/luma ${STATIC_LOCALES}; \
     php -d memory_limit=-1 bin/magento setup:static-content:deploy -f --jobs "${SCD_JOBS}" \
