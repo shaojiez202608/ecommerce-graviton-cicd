@@ -80,7 +80,7 @@ class MockSpApiClient:
 
     Behaviour is driven by synthetic data only:
     - recipient name ``FAIL_TRANSIENT`` (= ``FAIL_FIRST_2``): first two create calls return 503
-    - recipient name ``FAIL_FIRST_<n>``: the first n create calls return 503, then succeed
+    - recipient name ``FAIL_FIRST_<N>``: the first n create calls return 503, then succeed
     - recipient name ``FAIL_ALWAYS``: every create call returns 503
     - recipient name ``INVALID_ADDRESS``: create returns 400
     - recipient name ``LOST_ACK``: the first create call stores the order but returns 503 (the

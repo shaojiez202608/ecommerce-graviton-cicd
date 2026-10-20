@@ -128,7 +128,7 @@ PLATFORM: list[Ack] = [
         "restricted to this cluster by condition."),
     Ack("DeployProject/Role/DefaultPolicy/Resource",
         "IAM5[Resource::arn:<AWS::Partition>:rds:{region}:<AWS::AccountId>:snapshot:{project}-{env}-predeploy-*]",
-        "Pre-migration snapshots are named <prefix>-<env>-predeploy-<timestamp>; create/describe/prune only "
+        "Pre-migration snapshots are named <PREFIX>-<ENV>-predeploy-<TIMESTAMP>; create/describe/prune only "
         "within that prefix.", when=lambda app, env: env.snapshot_before_migrate),
     Ack("WebService/AlternateTargetRole/Resource",
         "IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonECSInfrastructureRolePolicyForLoadBalancers]",

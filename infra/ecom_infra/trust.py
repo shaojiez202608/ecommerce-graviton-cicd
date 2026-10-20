@@ -4,7 +4,7 @@ Adds aws:SourceAccount (StringEquals) and aws:SourceArn (ArnLike) to the AssumeR
 roles whose service documents these keys for trust policies (verified 2026-10-21):
 - codebuild.amazonaws.com: SourceArn = the CodeBuild project ARN
   https://docs.aws.amazon.com/codebuild/latest/userguide/cross-service-confused-deputy-prevention.html
-- ecs-tasks.amazonaws.com (task roles): SourceArn = arn:aws:ecs:<region>:<account>:* (a specific
+- ecs-tasks.amazonaws.com (task roles): SourceArn = arn:aws:ecs:<REGION>:<ACCOUNT>:* (a specific
   cluster is not supported) https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html
 - vpc-flow-logs.amazonaws.com: SourceArn = flow-log ARN (wildcard id)
   https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-iam-role.html

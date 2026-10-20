@@ -19,5 +19,5 @@
 3. 流水线：`scripts/package_source.sh develop` → Source → Build（arm64 构建机日志 `arch=aarch64`、扫描门禁结果）→ Deploy-dev（部署日志依次出现扫描复查 → `migrate task` → `waiting for service` → `cache-flush task` → `[smoke] /health_check.php -> 200`）。
 4. Schema 变更：晋级一个带新模块的 Magento 镜像，部署日志出现 `upgrade required -> maintenance window`、服务切换后 `maintenance window ... is closed`。
 5. 回滚：在 Deploy-dev 阶段选择「Roll back」，或执行 `scripts/rollback.sh dev`。
-6. 履约：`uv run python scripts/mcf_e2e.py --env dev --outbox-drill`；在 CloudWatch Logs `/aws/events/<project>-dev-mcf-bridge-events` 中查看发给独立站的事件；在 SQS 看 DLQ；在 CloudWatch 告警中看 `OrderExceptions`/`DlqNotEmpty`/`EventPublishFailures`。
+6. 履约：`uv run python scripts/mcf_e2e.py --env dev --outbox-drill`；在 CloudWatch Logs `/aws/events/<PROJECT>-dev-mcf-bridge-events` 中查看发给独立站的事件；在 SQS 看 DLQ；在 CloudWatch 告警中看 `OrderExceptions`/`DlqNotEmpty`/`EventPublishFailures`。
 7. 清理：见 README「清理」。

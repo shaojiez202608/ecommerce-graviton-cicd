@@ -5,10 +5,10 @@
 # Intended for sandbox verification and break-glass use; normal promotion goes through the pipeline.
 #
 # Environments behind a manual approval in the profile (e.g. uat, prod) are refused unless
-# --break-glass "<reason>" is given; the reason is passed to the deploy build (visible in its logs
+# --break-glass "<REASON>" is given; the reason is passed to the deploy build (visible in its logs
 # and build environment) so the bypass is auditable.
 #
-# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/promote_image.sh <env> <image-tag> [--break-glass "<reason>"]
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] scripts/promote_image.sh <ENV> <IMAGE_TAG> [--break-glass "<REASON>"]
 set -euo pipefail
 ENV_NAME="$1"; TAG="$2"; shift 2
 REASON=""
@@ -18,7 +18,7 @@ PROTECTED=$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print("
 for p in $PROTECTED; do
   if [ "$p" = "$ENV_NAME" ] && [ -z "$REASON" ]; then
     echo "refusing: $ENV_NAME is promoted through a manual approval in the pipeline." >&2
-    echo "use the pipeline, or pass --break-glass \"<reason>\" (recorded in the deploy build)." >&2
+    echo "use the pipeline, or pass --break-glass \"<REASON>\" (recorded in the deploy build)." >&2
     exit 2
   fi
 done

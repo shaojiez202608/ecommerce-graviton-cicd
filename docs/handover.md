@@ -4,7 +4,7 @@
 
 ## 1. 交付了什么
 
-- `infra/`：CDK（Python）应用，三类栈：`<project>-cicd`、`<project>-<env>-platform`、`<project>-<env>-mcf`（`<project>` 默认 `proto-ecom`）。参数集中在 `config/*.json`。
+- `infra/`：CDK（Python）应用，三类栈：`<PROJECT>-cicd`、`<PROJECT>-<ENV>-platform`、`<PROJECT>-<ENV>-mcf`（`<PROJECT>` 默认 `proto-ecom`）。参数集中在 `config/*.json`。
 - `app/magento/`：不可变 Magento 镜像（arm64）的 Dockerfile、提交到 Git 的 `config/config.php`、项目模块（含演示模块 `Proto_DeployDemo`，真实项目删除该目录与 config.php 中的一行）与运行时脚本（env.php 渲染、迁移、维护模式、缓存刷新）。`app/smoke/`：用于验证流程的替身镜像。
 - `buildspec/build.yml`、`scripts/deploy/*.sh`：一次构建、逐环境晋级的构建与部署逻辑。
 - `src/mcf/`：独立站 ↔ MCF 履约桥接（Lambda arm64），SP-API 调用层含 mock。
@@ -32,7 +32,7 @@
 - 发版：提交代码 → `scripts/package_source.sh develop|release`（或改用 CodeConnections 源，见 §5）。
 - 审批：`release` 流水线在 uat、prod 前停在审批动作，SNS 主题 `proto-ecom-approvals` 通知审批人；七天未处理视为失败。
 - 回滚：见 `docs/architecture.md` §3。数据库迁移不可逆，uat/prod 每次部署前自动快照。
-- 重新 `cdk deploy` 平台栈时按环境带 `-c imageTags=<env>=<tag>`，当前 tag 在 SSM `<ssm_prefix>/<env>/current_image_tag`（部署脚本成功后写入）。
+- 重新 `cdk deploy` 平台栈时按环境带 `-c imageTags=<ENV>=<TAG>`，当前 tag 在 SSM `<SSM_PREFIX>/<ENV>/current_image_tag`（部署脚本成功后写入）。
 - 发布失败且维护模式被保留（`keep`）：确认原因后从迁移前快照恢复或重新发布；人工关闭用 ops 任务执行 `magento-maintenance disable`。
 - MCF：EXCEPTION 订单修复原因后用 `scripts/mcf_redrive.py` 从 DLQ 重驱（自动带 `retry=true`）；店铺侧取消发 `Order Cancelled` 事件。消费者按事件里的 `eventId` 去重（至少一次投递）。
 - 增删 Magento 模块后用 `scripts/export_magento_config.sh` 重新生成并提交 `config.php`。

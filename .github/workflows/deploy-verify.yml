@@ -1,0 +1,64 @@
+# Sandbox deployment verification. Manual trigger only, behind an environment that requires
+# approval, with short-lived credentials from GitHub OIDC (no stored keys).
+name: deploy-verify
+on:
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: Destroy the stacks and run the residual check at the end
+        type: boolean
+        default: true
+permissions: {} # no workflow-level permissions; the job below asks for what it needs
+concurrency:
+  group: deploy-verify
+  cancel-in-progress: false
+jobs:
+  deploy-verify:
+    name: Deploy, verify and destroy (sandbox)
+    permissions:
+      contents: read # checkout
+      id-token: write # GitHub OIDC token for aws-actions/configure-aws-credentials
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    environment: sandbox-deploy # configure required reviewers on this environment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/<DEPLOY_VERIFY_ROLE_NAME>
+          aws-region: us-east-1
+      - run: make init
+      - name: Preflight (read-only; refuses destructive diffs)
+        env:
+          CONFIRM: ${{ vars.SANDBOX_ACCOUNT_LAST4 }}
+        run: make preflight
+      - name: Deploy
+        env:
+          CONFIRM: ${{ vars.SANDBOX_ACCOUNT_LAST4 }}
+        run: make deploy
+      - name: Start the pipeline with this commit and wait
+        run: |
+          git config user.email ci@example.com && git config user.name ci
+          scripts/package_source.sh develop
+          sleep 60
+          for _ in $(seq 1 90); do
+            s=$(aws codepipeline list-pipeline-executions --pipeline-name proto-ecom-pipeline-develop --max-items 1 --query 'pipelineExecutionSummaries[0].status' --output text | head -1)
+            [ "$s" = "InProgress" ] || break; sleep 60
+          done
+      - name: Verify
+        run: make verify
+      - name: Destroy
+        if: ${{ always() && inputs.destroy }}
+        env:
+          CONFIRM_DESTROY: proto-ecom
+          CONFIRM_DATA: "yes"
+        run: make destroy
+      - name: Residual check
+        if: ${{ always() && inputs.destroy }}
+        run: make verify-cleanup

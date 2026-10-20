@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """CDK entry point.
 
-  npx -y aws-cdk@2 deploy --all -c config=config/sandbox.json
-  npx -y aws-cdk@2 deploy proto-ecom-dev-platform -c config=config/sandbox.json -c envs=dev -c imageTag=<sha>
+  Deployment commands: README "Deployment" (make deploy runs cdk deploy --all -c config=<PROFILE>).
 
 Context:
   config    path to the single parameter file (default config/sandbox.json)
   envs      comma-separated subset of environments to synthesize (default: all in the file)
-  imageTag  image tag currently running in the ONE synthesized environment (use with envs=<env>)
-  imageTags per-environment tags, e.g. dev=<sha>,test=<sha>; environments without a tag start
+  imageTag  image tag currently running in the ONE synthesized environment (use with envs=<ENV>)
+  imageTags per-environment tags, e.g. dev=<SHA>,test=<SHA>; environments without a tag start
             with desiredCount 0 (first deploy). The running tag of each environment is in SSM
-            <ssm_prefix>/<env>/current_image_tag (written by the deploy script).
+            <SSM_PREFIX>/<ENV>/current_image_tag (written by the deploy script).
   synthCheck  "true": fill blank sizing/certificate fields with placeholders so an unfilled profile
             (config/customer.json) can be synthesized and checked with cdk-nag. Not for deployment.
 """

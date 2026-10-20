@@ -1,5 +1,5 @@
 """Storefront <-> Amazon MCF fulfillment bridge: EventBridge bus, SQS (+DLQ), DynamoDB state table,
-three arm64 Lambda functions, placeholder SP-API secret, alarms. Stack: <project>-<env>-mcf.
+three arm64 Lambda functions, placeholder SP-API secret, alarms. Stack: <PROJECT>-<ENV>-mcf.
 """
 
 from __future__ import annotations

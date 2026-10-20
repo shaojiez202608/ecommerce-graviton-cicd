@@ -4,7 +4,7 @@
 #   2. deny paths: secret resource policies, deploy-role scope, trust conditions (verify_controls.py)
 #   3. protected promotion is refused without --break-glass (customer template, no AWS call)
 #   4. MCF bridge end to end with the mock SP-API, including the outbox drill (mcf_e2e.py)
-# Usage: [ECOM_CONFIG=config/<profile>.json] [ENV_NAME=dev] scripts/verify.sh
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] [ENV_NAME=dev] scripts/verify.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/prefix.sh"

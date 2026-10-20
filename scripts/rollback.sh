@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Manual rollback of the web service to a previous task definition revision (no DB change).
-# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/rollback.sh <env> [task-definition-arn]
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] scripts/rollback.sh <ENV> [task-definition-arn]
 #        (default target: previous revision; prefixes come from the profile, see scripts/lib/prefix.sh)
 # Database migrations are forward-only: if the bad release changed the schema, restore the
 # pre-deploy snapshot instead (uat/prod take one automatically). See docs/handover.md.

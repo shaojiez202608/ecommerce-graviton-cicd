@@ -1,6 +1,8 @@
 # 架构
 
-> Prototype，不用于生产。场景：某 IoT 厂商的海外独立站（开源 PHP 电商框架 Magento Open Source），先建测试环境与构建发布流程，订单经 Amazon Multi-Channel Fulfillment（MCF）履约。mermaid 图是架构的事实来源。
+> Prototype，不用于生产。场景：某 IoT 厂商的海外独立站（开源 PHP 电商框架 Magento Open Source），先建测试环境与构建发布流程，订单经 Amazon Multi-Channel Fulfillment（MCF）履约。mermaid 图是架构的事实来源。本文描述 `v0.1.0` 标签对应的提交（验证所用提交哈希见 `VERIFICATION.md`）。
+
+信任边界：独立站 → EventBridge 总线；桥接 → SP-API（外部 HTTPS）；源码/依赖 → CodeBuild → ECR；CodePipeline → 各环境 VPC 内部署项目 → ECS；运维人员 → 运维脚本（`promote_image.sh`、`mcf_redrive.py`）。威胁与对策见 `THREAT_MODEL.md`。部署拓扑：单账号单区域，每个环境一个 VPC（公有子网只放 NAT，应用子网放 ALB/任务/部署项目，隔离子网放数据层）。
 
 ## 1. 总览
 
@@ -9,10 +11,10 @@ flowchart LR
   subgraph Dev["开发者"]
     G["git commit (SHA)"] --> Z["scripts/package_source.sh<br/>git archive + REVISION"]
   end
-  Z -->|"PutObject source/&lt;flow&gt;.zip"| S3[("S3 源桶<br/>版本化/BPA/TLS")]
+  Z -->|"PutObject source/&lt;FLOW&gt;.zip"| S3[("S3 源桶<br/>版本化/BPA/TLS")]
   S3 -->|"EventBridge: Object Created"| P
 
-  subgraph CICD["&lt;project&gt;-cicd"]
+  subgraph CICD["&lt;PROJECT&gt;-cicd"]
     P["CodePipeline V2 (QUEUED)"] --> B["CodeBuild ARM_CONTAINER<br/>amazonlinux-aarch64-standard:3.0<br/>docker build linux/arm64"]
     B -->|"push :&lt;SHA&gt; (immutable)"| ECR[("ECR<br/>scan on push")]
     B -->|"扫描门禁"| ECR
@@ -20,7 +22,7 @@ flowchart LR
     D1 --> A1{{"审批① QA"}} --> D2["Deploy-uat (蓝绿)"] --> A2{{"审批② 业务"}} --> D3["Deploy-prod (蓝绿)"]
   end
 
-  subgraph ENV["&lt;project&gt;-&lt;env&gt;-platform（每环境独立 VPC）"]
+  subgraph ENV["&lt;PROJECT&gt;-&lt;ENV&gt;-platform（每环境独立 VPC）"]
     DP["CodeBuild 部署项目（VPC 内）<br/>ecs_deploy.sh + smoke_test.sh"]
     ALB["内部 ALB<br/>http:80 或 https:443（ACM 证书）<br/>仅 VPC/内网 CIDR"] --> WEB["ECS Fargate ARM64<br/>nginx + php-fpm 8.3"]
     OPS["一次性任务（同镜像）<br/>migrate / cache:flush"]
@@ -30,13 +32,13 @@ flowchart LR
     WEB --> EFS[("EFS: pub/media, var/")]
     OPS --> RDS
     OPS --> EFS
-    SM["Secrets Manager / SSM<br/>/&lt;prefix&gt;/&lt;env&gt;/"] -.运行时注入.-> WEB
+    SM["Secrets Manager / SSM<br/>/&lt;PREFIX&gt;/&lt;ENV&gt;/"] -.运行时注入.-> WEB
     SM -.-> OPS
   end
   D1 & D2 & D3 -->|"StartBuild"| DP
   DP -->|"RunTask(迁移)→UpdateService→RunTask(cache:flush)"| WEB
 
-  subgraph MCF["&lt;project&gt;-&lt;env&gt;-mcf"]
+  subgraph MCF["&lt;PROJECT&gt;-&lt;ENV&gt;-mcf"]
     BUS["EventBridge 自定义总线"] -->|"Order Paid / Order Cancelled"| Q["SQS + DLQ"] --> L1["Lambda arm64<br/>order_intake"]
     SCH["EventBridge 定时"] --> L2["Lambda arm64<br/>tracking_poller"]
     SCH --> L3["Lambda arm64<br/>inventory_sync"]
@@ -49,28 +51,28 @@ flowchart LR
   WEB -. "店铺模块发布 Order Paid/Cancelled（未实现，见 Q-05）" .-> BUS
 ```
 
-栈：`<project>-cicd`（ECR、源/产物桶、构建项目、流水线、审批主题），`<project>-<env>-platform`（每环境一个 VPC 与全部运行时资源 + 该环境的部署项目），`<project>-<env>-mcf`（履约桥接）。`<project>` 与 SSM 前缀来自配置文件（默认 `proto-ecom`、`/proto-ecom`），脚本从配置或部署元数据读取，不写死。流水线按名字引用各环境部署项目，栈之间没有 CloudFormation 导出，任意环境可单独部署或删除。
+栈：`<PROJECT>-cicd`（ECR、源/产物桶、构建项目、流水线、审批主题），`<PROJECT>-<ENV>-platform`（每环境一个 VPC 与全部运行时资源 + 该环境的部署项目），`<PROJECT>-<ENV>-mcf`（履约桥接）。`<PROJECT>` 与 SSM 前缀来自配置文件（默认 `proto-ecom`、`/proto-ecom`），脚本从配置或部署元数据读取，不写死。流水线按名字引用各环境部署项目，栈之间没有 CloudFormation 导出，任意环境可单独部署或删除。
 
 ## 2. Magento 的 4 个 CI/CD 关键点如何落地
 
 | 关键点 | 落地位置 | 做法 |
 |---|---|---|
 | 1. 不可变镜像 | `app/magento/Dockerfile`（source/builder 阶段）、`buildspec/build.yml` | `composer install --no-dev`、`setup:di:compile`、`setup:static-content:deploy` 都在构建阶段执行；为了不连数据库，构建时写入不含真实连接的 `env.php` 存根，构建结束删除。镜像 tag = commit SHA，ECR 不可变 tag；同一 SHA 已存在则复用 |
-| 2. 配置分离 | `app/magento/config/config.php`（进 Git）、`app/magento/docker/build-env.php render`、ECS secrets | `app/etc/config.php`（模块、scopes、themes、i18n）提交到 Git，构建直接使用并校验与代码中的模块一致（不一致则构建失败，用 Dockerfile 的 `config-export` 目标或 `scripts/export_magento_config.sh` 重新生成）。`env.php` 在容器启动时由环境变量渲染：数据库/OpenSearch/Valkey 凭证与 crypt key 来自 Secrets Manager，`base_url`、后台路径来自 SSM 参数（`<ssm_prefix>/<env>/...`），均通过 ECS `secrets` 注入 |
+| 2. 配置分离 | `app/magento/config/config.php`（进 Git）、`app/magento/docker/build-env.php render`、ECS secrets | `app/etc/config.php`（模块、scopes、themes、i18n）提交到 Git，构建直接使用并校验与代码中的模块一致（不一致则构建失败，用 Dockerfile 的 `config-export` 目标或 `scripts/export_magento_config.sh` 重新生成）。`env.php` 在容器启动时由环境变量渲染：数据库/OpenSearch/Valkey 凭证与 crypt key 来自 Secrets Manager，`base_url`、后台路径来自 SSM 参数（`<SSM_PREFIX>/<ENV>/...`），均通过 ECS `secrets` 注入 |
 | 3. 数据库迁移单点执行 | `app/magento/docker/migrate.sh`、`scripts/deploy/ecs_deploy.sh` | 部署脚本在更新服务**之前**启动**一个**一次性 ECS 任务；脚本拒绝在已有 ops 任务运行时再启动；迁移脚本再持有 MySQL `GET_LOCK`（会话级，任务退出或连接断开即释放），第二个迁移立即失败。空库 `setup:install`；否则 `setup:db:status` 判断，需要升级才开维护模式执行 `setup:upgrade --keep-generated`。任务带 init 进程，SIGTERM 能触发脚本的清理陷阱。Web 容器入口从不执行迁移 |
 | 4. 零停机与缓存 | `platform_stack.py`、`ecs_deploy.sh`、`cache-flush.sh` | dev/test：滚动更新（最小健康 100%）+ 断路器自动回滚；uat/prod：ECS 原生蓝绿（bake time 内保留蓝组）。服务稳定后再跑一次性 `cache:flush` 任务；本次部署开过维护模式的，`cache:flush` 之后才关闭（见 §3） |
 
 ## 3. 多环境晋级、审批与回滚
 
 - 两条流水线：`develop`（dev，自动）和 `release`（test 自动 + 冒烟 → 审批① → uat 蓝绿 → 审批② → prod 蓝绿）。每条流水线只有一个构建动作，后续所有部署阶段输入同一个构建产物 `imageDetail.json`（同一 SHA 镜像）。环境差异只来自运行时注入的参数。
-- 镜像门禁：构建后扫描门禁阻断的镜像被隔离（删除可晋级的 tag，摘要保留为 `quarantine-<tag>`）；每次部署开始时用同一门禁参数复查 tag 与扫描结果，复查不过就不做任何变更（也覆盖 `scripts/promote_image.sh`）。`promote_image.sh` 对有审批的环境默认拒绝，需 `--break-glass "<理由>"`。
+- 镜像门禁：构建后扫描门禁阻断的镜像被隔离（删除可晋级的 tag，摘要保留为 `quarantine-<TAG>`）；每次部署开始时用同一门禁参数复查 tag 与扫描结果，复查不过就不做任何变更（也覆盖 `scripts/promote_image.sh`）。`promote_image.sh` 对有审批的环境默认拒绝，需 `--break-glass "<理由>"`。
 - 冒烟：部署项目在该环境 VPC 内访问内部 ALB 的 `/health_check.php` 与 `/`；https 环境用证书主机名并校验证书（`curl --connect-to` 指向 ALB）。
 - 有 schema 变更的发布顺序：迁移任务开维护模式并 `setup:upgrade` → 更新服务（维护期间健康检查 `/health_check.php` 不受维护模式影响，新任务照常通过）→ PRIMARY 部署为新修订且 COMPLETED → `cache:flush` → 关闭维护模式。这样旧代码不会在切换期间服务已升级的 schema。
 - 迁移开始后的任何失败（迁移失败、超时被停止、滚动/蓝绿回滚、cache:flush 失败），部署脚本的 EXIT 陷阱按环境参数 `maintenance_on_failure` 跑一次维护任务：`disable`（dev/test 默认）关闭维护模式，恢复访问，代价是可能出现旧代码 + 新 schema；`keep`（uat/prod 默认）保持维护模式，由人从迁移前快照恢复或完成发布。迁移在 `setup:upgrade` 开始前失败的，迁移脚本自己关闭维护模式。
 - 回滚分三层：
   1. **ECS 层**：滚动更新的断路器在新任务起不来或健康检查失败时回到上一个 COMPLETED 部署；蓝绿在绿组不健康时不切流量。部署脚本检查 PRIMARY 部署是否为新修订且 COMPLETED，否则让阶段失败（随后按上一条处理维护模式）。
   2. **流水线层**：每个 Deploy 阶段配置 `OnFailure: ROLLBACK`，CodePipeline 用该阶段上一次成功执行的产物重新执行该阶段（即上一镜像 tag，同样先迁移检查再切换）。
-  3. **手工**：`scripts/rollback.sh <env> [task-def-arn]` 只把服务指回指定修订，不碰数据库。
+  3. **手工**：`scripts/rollback.sh <ENV> [task-def-arn]` 只把服务指回指定修订，不碰数据库。
 - **数据库迁移不可逆**：回滚到旧镜像不会撤销 schema。旧镜像的迁移检查遇到它不认识的新表/新模块时的实际行为见 `VERIFICATION.md`（沙箱实测）；schema 不兼容时应从迁移前快照恢复（uat/prod 每次部署前自动快照并保留最近 `predeploy_snapshots_keep` 个，dev/test 不打）。
 
 ## 4. MCF 履约桥接（独立站 ↔ Amazon MCF）
@@ -101,12 +103,12 @@ flowchart LR
 
 可靠性：状态变化与它产生的事件在同一次条件写入里落库（乐观锁 `version`，事务性 outbox），EventBridge 接受后才从 outbox 移除；发布失败时状态照常推进、事件留在 outbox，由轮询器或下一次投递补发。投递语义是至少一次，事件带 `eventId`（`<订单号>:<序号>`）供消费者去重。
 
-SP-API 调用层：`MockSpApiClient`（默认，状态存 DynamoDB，可跨 Lambda 冷启动；收件人名 `FAIL_TRANSIENT`、`FAIL_FIRST_<n>`、`FAIL_ALWAYS`、`INVALID_ADDRESS`、`LOST_ACK` 触发故障）与 `LiveSpApiClient`（LWA refresh token 换访问令牌，`x-amz-access-token` 头；**未对真实账户运行**）。每个 SP-API 区域一个客户端；live 模式要求 `spapi_mode=live` 且 Secret 中每个区域的 refresh token 都不是占位值，否则 Lambda 拒绝启动。
+SP-API 调用层：`MockSpApiClient`（默认，状态存 DynamoDB，可跨 Lambda 冷启动；收件人名 `FAIL_TRANSIENT`、`FAIL_FIRST_<N>`、`FAIL_ALWAYS`、`INVALID_ADDRESS`、`LOST_ACK` 触发故障）与 `LiveSpApiClient`（LWA refresh token 换访问令牌，`x-amz-access-token` 头；**未对真实账户运行**）。每个 SP-API 区域一个客户端；live 模式要求 `spapi_mode=live` 且 Secret 中每个区域的 refresh token 都不是占位值，否则 Lambda 拒绝启动。
 
 ## 5. 设计取舍
 
 - ECS 部署由 VPC 内 CodeBuild 脚本完成，而不是 CodePipeline 的 ECS 动作：换取严格的「迁移 → 切换 → 刷缓存/关维护」顺序，代价是部署逻辑在脚本里，需要自己测试（`tests/test_config_and_keypoints.py`）。ECS 原生蓝绿的生命周期钩子（A13）是 Lambda，适合切流前验证，不适合运行一次性迁移任务。
-- CDK 与流水线共同管理任务定义：流水线注册新修订并更新服务；重新 `cdk deploy` 平台栈时需按环境带 `-c imageTags=<env>=<当前 tag>`（当前 tag 在 SSM `<ssm_prefix>/<env>/current_image_tag`），否则该环境回到初始状态（desiredCount=0）。
+- CDK 与流水线共同管理任务定义：流水线注册新修订并更新服务；重新 `cdk deploy` 平台栈时需按环境带 `-c imageTags=<ENV>=<当前 tag>`（当前 tag 在 SSM `<SSM_PREFIX>/<ENV>/current_image_tag`），否则该环境回到初始状态（desiredCount=0）。
 - TLS 在 ALB 终止，ALB → 任务为 VPC 内 HTTP（SECURITY-NOTES「传输加密例外」）。
 - 单表 DynamoDB + 两个 GSI（状态/映射；稀疏 outbox 索引），换取更少的资源与 IAM 授权。
 - 沙箱只部署 dev；四环境差异用参数表达并由 CDK assertions 覆盖。

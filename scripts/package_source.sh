@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package the committed tree (git archive HEAD) plus a REVISION file and upload it to the
 # pipeline source bucket. The upload event starts the matching pipeline.
-# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/package_source.sh <pipeline-name> [stack-name]
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] scripts/package_source.sh <PIPELINE_NAME> [stack-name]
 set -euo pipefail
 source "$(dirname "$0")/lib/prefix.sh"
 PIPELINE="${1:-develop}"; STACK="${2:-$PROJECT-cicd}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Post-deploy smoke test from inside the VPC against the internal ALB.
-# HTTP environments: http://<alb-dns>/...
-# HTTPS environments: https://<site host>/... with normal certificate verification; curl is told to
+# HTTP environments: http://<ALB_DNS>/...
+# HTTPS environments: https://<SITE_HOST>/... with normal certificate verification; curl is told to
 # connect to the internal ALB (--connect-to), so no DNS record is needed for the check itself.
 set -euo pipefail
 ENV_NAME="$1"; PREFIX="${SSM_PREFIX:?SSM_PREFIX must be set (environment variable of the deploy project)}"

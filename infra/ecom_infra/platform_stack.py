@@ -1,6 +1,6 @@
 """Per-environment runtime: VPC, RDS for MySQL, ElastiCache (Valkey), OpenSearch, EFS, ECS on
 Fargate ARM64 (Graviton), internal ALB, monitoring, and the in-VPC deploy project used by the
-pipeline. One stack per environment: <project>-<env>-platform.
+pipeline. One stack per environment: <PROJECT>-<ENV>-platform.
 """
 
 from __future__ import annotations

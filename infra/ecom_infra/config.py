@@ -265,7 +265,7 @@ def _validate_env(name: str, env: EnvConfig) -> None:
     if not RE_ENGINE_VERSION.match(env.db_engine_version) or not RE_ENGINE_VERSION.match(env.cache_engine_version):
         errors.append("db_engine_version / cache_engine_version must look like 8.4.11 / 8.1")
     if not env.search_engine_version.startswith("OpenSearch_"):
-        errors.append("search_engine_version must look like OpenSearch_<major>.<minor>")
+        errors.append("search_engine_version must look like OpenSearch_<MAJOR>.<MINOR>")
     if env.https and env.certificate_arn and env.certificate_arn != SYNTH_CHECK_CERTIFICATE \
             and not RE_CERT_ARN.match(env.certificate_arn):
         errors.append("certificate_arn must be an ACM certificate ARN")

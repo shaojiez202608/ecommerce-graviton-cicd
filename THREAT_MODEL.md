@@ -1,5 +1,7 @@
 # THREAT_MODEL
 
+> **Status: DRAFT** — not reviewed by the deploying organisation's security team yet.
+
 本原型**不使用 LLM**，没有把不可信输入交给模型处理，因此通用要求中「提示注入」类威胁不适用。下面覆盖实际存在的不可信输入：独立站订单事件、SP-API 响应、构建输入（源码与依赖）。
 
 ## 资产

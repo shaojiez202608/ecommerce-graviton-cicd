@@ -2,7 +2,7 @@
 # Operator tool: one-off image build of a given commit and variant (magento | smoke) on the arm64
 # image-build project, outside the pipeline (same buildspec, same scan gate). The source zip goes
 # to manual/ in the source bucket, so no pipeline is triggered. Prints the build id.
-# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/build_variant.sh <commit> <magento|smoke>
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] scripts/build_variant.sh <COMMIT> <magento|smoke>
 set -euo pipefail
 COMMIT="$1"; VARIANT="$2"
 source "$(dirname "$0")/lib/prefix.sh"

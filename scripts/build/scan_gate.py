@@ -6,9 +6,9 @@ Works with both registry scan types:
 - BASIC: status COMPLETE, counts in imageScanFindings.findingSeverityCounts
 - ENHANCED (Amazon Inspector): status ACTIVE, findings in imageScanFindings.enhancedFindings
 Fails closed on FAILED / UNSUPPORTED_IMAGE / timeout.
-Usage: python3 scan_gate.py <repo> <tag> <CRITICAL,HIGH> [timeout_seconds] [fail|warn] [--quarantine|--verify-only]
+Usage: python3 scan_gate.py <REPO> <TAG> <CRITICAL,HIGH> [timeout_seconds] [fail|warn] [--quarantine|--verify-only]
 "warn" only applies when no scan result is available in time (sandbox profile); findings always fail.
---quarantine (build): a blocked image keeps its digest under "quarantine-<tag>" and loses <tag>,
+--quarantine (build): a blocked image keeps its digest under "quarantine-<TAG>" and loses <TAG>,
   so no environment can be promoted to it.
 --verify-only (deploy): re-check the stored result; no quarantine, no scan-counts.json.
 """
@@ -51,7 +51,7 @@ def aws(*args: str) -> subprocess.CompletedProcess:
 
 
 def quarantine(repo: str, tag: str) -> None:
-    """Re-tag the blocked image as quarantine-<tag> (kept for analysis) and remove <tag>."""
+    """Re-tag the blocked image as quarantine-<TAG> (kept for analysis) and remove <TAG>."""
     got = aws("batch-get-image", "--repository-name", repo, "--image-ids", f"imageTag={tag}",
               "--query", "images[0].imageManifest", "--output", "text")
     if got.returncode == 0 and got.stdout.strip() not in ("", "None"):

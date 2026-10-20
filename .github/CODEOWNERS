@@ -1,0 +1,8 @@
+# Sensitive paths need review by the maintainer (see OPEN-QUESTIONS: maintainer handle to be set).
+/.github/                     @<MAINTAINER_GITHUB_HANDLE>
+/.gitleaks.toml               @<MAINTAINER_GITHUB_HANDLE>
+/infra/ecom_infra/nag.py      @<MAINTAINER_GITHUB_HANDLE>
+/infra/ecom_infra/trust.py    @<MAINTAINER_GITHUB_HANDLE>
+/AGENTS.md                    @<MAINTAINER_GITHUB_HANDLE>
+/CLAUDE.md                    @<MAINTAINER_GITHUB_HANDLE>
+/scripts/build/scan_gate.py   @<MAINTAINER_GITHUB_HANDLE>

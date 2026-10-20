@@ -10,7 +10,7 @@
 #   5. run ONE cache:flush task, which also closes the maintenance window
 # On any failure after step 3 started, the EXIT trap applies the environment's
 # maintenance_on_failure policy (disable | keep) through a one-off maintenance task.
-# Usage: ecs_deploy.sh <env> <imageDetail.json>
+# Usage: ecs_deploy.sh <ENV> <imageDetail.json>
 set -euo pipefail
 ENV_NAME="$1"; DETAIL="$2"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -97,7 +97,7 @@ echo "[deploy] web=$WEB_TD ops=$OPS_TD"
 
 # ---------------------------------------------------------------- 2. snapshot (uat/prod)
 if [ "$SNAP" = "True" ] || [ "$SNAP" = "true" ]; then
-  SNAP_ID="${SNAP_PREFIX}-$(date -u +%Y%m%d%H%M%S)"  # matches the IAM grant on <prefix>-<env>-predeploy-*
+  SNAP_ID="${SNAP_PREFIX}-$(date -u +%Y%m%d%H%M%S)"  # matches the IAM grant on <PREFIX>-<ENV>-predeploy-*
   aws rds create-db-snapshot --db-instance-identifier "$DB" --db-snapshot-identifier "$SNAP_ID" \
     --tags Key=Purpose,Value=predeploy Key=ImageTag,Value="$IMAGE_TAG" >/dev/null
   aws rds wait db-snapshot-available --db-snapshot-identifier "$SNAP_ID"

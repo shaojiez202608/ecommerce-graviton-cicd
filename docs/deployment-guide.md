@@ -31,12 +31,12 @@
 | `build.block_on_severities` / `scan_timeout_seconds` / `scan_unavailable_action` | 扫描门禁：阻断级别、等待时间、拿不到结果时 `fail`（交付默认）或 `warn`（沙箱）。构建和每次部署都用这组参数 |
 | `build.alarm_email` | 可选；为告警/审批主题添加邮件订阅（需确认订阅） |
 | `pipelines[]` | 每条流水线的名称、源对象键、环境顺序、`approvals_before`（在哪个环境前加审批及说明；这些环境也受 `promote_image.sh` 保护） |
-| `environments.<env>` 网络与计算 | `vpc_cidr`、`max_azs`、`nat_gateways`、`deployment`（`rolling`/`blue_green`）、`bake_time_minutes`、`desired_count`、`task_cpu`、`task_memory_mib`、`allowed_ingress_cidrs`（禁止 /0） |
-| `environments.<env>` 数据层 | `db_instance_class`、`db_engine_version`、`db_multi_az`、`db_allocated_storage_gib`、`cache_node_type`、`cache_engine_version`、`search_instance_type`、`search_engine_version`、`search_data_nodes`、`search_volume_gib` |
-| `environments.<env>` 发布 | `snapshot_before_migrate`、`predeploy_snapshots_keep`、`maintenance_on_failure`（`disable`/`keep`，见 architecture §3） |
-| `environments.<env>` 入口 | `base_url_scheme`（`http`/`https`）、`certificate_arn`、`site_hostname` |
-| `environments.<env>.alarms` | CPU/内存百分比、RDS 剩余存储、ALB 5xx 阈值 |
-| `environments.<env>.mcf` | `spapi_mode`（mock/live）、`marketplaces`（`{"US": {"id": "<marketplaceId>", "region": "na"}}`）、默认履约策略、最大尝试次数、轮询/同步间隔、mock 发货延迟、Lambda 内存、intake 批大小、单次 HTTP 超时 |
+| `environments.<ENV>` 网络与计算 | `vpc_cidr`、`max_azs`、`nat_gateways`、`deployment`（`rolling`/`blue_green`）、`bake_time_minutes`、`desired_count`、`task_cpu`、`task_memory_mib`、`allowed_ingress_cidrs`（禁止 /0） |
+| `environments.<ENV>` 数据层 | `db_instance_class`、`db_engine_version`、`db_multi_az`、`db_allocated_storage_gib`、`cache_node_type`、`cache_engine_version`、`search_instance_type`、`search_engine_version`、`search_data_nodes`、`search_volume_gib` |
+| `environments.<ENV>` 发布 | `snapshot_before_migrate`、`predeploy_snapshots_keep`、`maintenance_on_failure`（`disable`/`keep`，见 architecture §3） |
+| `environments.<ENV>` 入口 | `base_url_scheme`（`http`/`https`）、`certificate_arn`、`site_hostname` |
+| `environments.<ENV>.alarms` | CPU/内存百分比、RDS 剩余存储、ALB 5xx 阈值 |
+| `environments.<ENV>.mcf` | `spapi_mode`（mock/live）、`marketplaces`（`{"US": {"id": "<marketplaceId>", "region": "na"}}`）、默认履约策略、最大尝试次数、轮询/同步间隔、mock 发货延迟、Lambda 内存、intake 批大小、单次 HTTP 超时 |
 
 实例类与大小以官方页面为准（链接见 `docs/graviton-compatibility.md` 末尾）。费用按各服务计费维度产生（Fargate vCPU/内存时长、RDS 实例时长与存储、ElastiCache 节点时长、OpenSearch 实例时长与存储、NAT 网关时长与流量、CodeBuild 构建分钟等），以各服务官方定价页为准。
 
@@ -51,11 +51,11 @@ TAG=$(aws ssm get-parameter --name /proto-ecom/dev/current_image_tag --query Par
 # 再执行 README「部署」一节的命令，追加 -c imageTags=dev=$TAG
 ```
 
-`-c imageTag=<tag>` 只在只合成一个环境（`-c envs=<env>`）时接受。
+`-c imageTag=<TAG>` 只在只合成一个环境（`-c envs=<ENV>`）时接受。
 
 ## 手工晋级已有镜像（沙箱验证 / 应急）
 
-`scripts/promote_image.sh <env> <image-tag>` 用该环境的部署项目执行同一部署脚本（同样先复查扫描结果）。对流水线中有审批的环境默认拒绝，应急时加 `--break-glass "<理由>"`，理由记录在部署构建的环境变量与日志中。
+`scripts/promote_image.sh <ENV> <IMAGE_TAG>` 用该环境的部署项目执行同一部署脚本（同样先复查扫描结果）。对流水线中有审批的环境默认拒绝，应急时加 `--break-glass "<理由>"`，理由记录在部署构建的环境变量与日志中。
 
 ## 修改 Magento 模块后重新生成 config.php
 
@@ -74,7 +74,7 @@ git diff app/magento/config/config.php  # 检查后提交
 
 ## 启用真实 SP-API（不在原型验证范围）
 
-1. 在 Secrets Manager 的 `<project>-<env>-spapi-credentials` 中填入 `lwa_client_id`、`lwa_client_secret` 与每个用到的区域的 `lwa_refresh_token_<na|eu|fe>`。
+1. 在 Secrets Manager 的 `<PROJECT>-<ENV>-spapi-credentials` 中填入 `lwa_client_id`、`lwa_client_secret` 与每个用到的区域的 `lwa_refresh_token_<na|eu|fe>`。
 2. 配置 `mcf.spapi_mode=live` 与 `mcf.marketplaces`，重新部署 mcf 栈。
 3. 先用 SP-API 沙箱验证（handover §4 第 9 条）。
 

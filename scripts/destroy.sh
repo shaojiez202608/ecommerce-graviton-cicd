@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tear down everything this project created in the profile's account/region.
-#   - confirmation 1: type the project prefix (or CONFIRM_DESTROY=<project>)
+#   - confirmation 1: type the project prefix (or CONFIRM_DESTROY=<PROJECT>)
 #   - confirmation 2: deleting data (databases, buckets, pre-deploy snapshots) is confirmed
 #     separately (or CONFIRM_DATA=yes); without it, data-holding leftovers are only listed
 #   - every step warns and continues on failure; the residual check runs at the end
@@ -8,7 +8,7 @@
 # log groups created by services (RDS exports, Container Insights, CDK handlers), secrets in
 # scheduled deletion, pre-deploy RDS snapshots, ECR quarantine tags (removed with the repository),
 # and this project's objects in the shared CDK bootstrap bucket (identified by asset hash).
-# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/destroy.sh
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] scripts/destroy.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/prefix.sh"
@@ -17,7 +17,7 @@ REGION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["region
 REMOVAL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["removal_policy"])' "$_ECOM_CFG")
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 warn() { echo "  WARNING: $*" >&2; }
-ask() {  # ask <prompt> <expected> <env-value>
+ask() {  # ask <PROMPT> <EXPECTED> <ENV_VALUE>
   [ "${3:-}" = "$2" ] && return 0
   [ -t 0 ] || { echo "non-interactive: set the confirmation variable" >&2; return 1; }
   read -r -p "$1 " a; [ "$a" = "$2" ]

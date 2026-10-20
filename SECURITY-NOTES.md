@@ -49,9 +49,28 @@
 | RDS11 | 所有环境 | 保留默认端口，访问已由安全组与隔离子网限制 |
 | `@aws-cdk/aws-ecs:shouldUseCircuitBreaker` | 蓝绿环境的 `WebService` | 蓝绿不使用滚动断路器，失败时流量保持在蓝组 |
 
+## 服务角色信任策略（confused deputy）
+
+`infra/ecom_infra/trust.py` 给下列服务角色的 AssumeRole 语句同时加 `aws:SourceAccount`（StringEquals）与 `aws:SourceArn`（ArnLike），格式按各服务官方文档（核实日期 2026-10-21）：
+
+| 服务主体 | 角色 | SourceArn | 依据 |
+|---|---|---|---|
+| `codebuild.amazonaws.com` | 镜像构建、各环境部署项目 | `arn:aws:codebuild:<REGION>:<ACCOUNT>:project/<PROJECT>-*` | https://docs.aws.amazon.com/codebuild/latest/userguide/cross-service-confused-deputy-prevention.html |
+| `ecs-tasks.amazonaws.com` | Web/Ops 任务角色 | `arn:aws:ecs:<REGION>:<ACCOUNT>:*`（文档说明不支持指定集群） | https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html |
+| `vpc-flow-logs.amazonaws.com` | VPC 流日志角色 | `arn:aws:ec2:<REGION>:<ACCOUNT>:vpc-flow-log/*` | https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-iam-role.html |
+| `events.amazonaws.com` | 源桶事件启动流水线的规则目标角色 | `arn:aws:events:<REGION>:<ACCOUNT>:rule/*` | https://docs.aws.amazon.com/eventbridge/latest/userguide/cross-service-confused-deputy-prevention.html |
+
+未加条件（官方文档没有给出这类信任策略的条件键用法，不猜测）：CodePipeline 服务角色（https://docs.aws.amazon.com/codepipeline/latest/userguide/pipelines-create-service-role-cli.html ）、ECS 任务执行角色（https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html ）、ECS 蓝绿基础设施角色（https://docs.aws.amazon.com/AmazonECS/latest/developerguide/AmazonECSInfrastructureRolePolicyForLoadBalancers.html ）、Lambda 执行角色（Lambda 文档说明 `aws:SourceArn` 用于以函数为目标的资源策略：https://docs.aws.amazon.com/lambda/latest/dg/permissions-source-function-arn.html ）、CodePipeline 动作角色（信任的是流水线角色本身，不是服务主体）。
+
+## 敏感资源的资源策略
+
+- 每个 Secrets Manager Secret 都有资源策略：拒绝除消费它的任务执行角色以外的所有主体 `GetSecretValue`（管理员也不例外）；CloudFormation 以动态引用解析的 Secret（RDS 主用户、OpenSearch 主用户、Valkey AUTH）另外放行 CDK 的 CloudFormation 执行角色（`cdk-*-cfn-exec-role-*`）。SP-API Secret 只允许三个桥接函数读取（`platform_stack.py` `_lock_secrets`、`mcf_stack.py`）。
+- S3 桶：Block Public Access、拒绝非 TLS；SQS 队列与 SNS 主题拒绝非 TLS；SQS 只接受 EventBridge 规则（带 `aws:SourceArn`）发送的事件（CDK 生成）。
+- 未加资源策略：DynamoDB 表（只有本账号内被授权的角色能访问；表资源策略列入加固清单）、EventBridge 自定义总线（无资源策略即只允许本账号）。
+
 ## 部署相关的权限
 
-- 部署项目：`ecs:RunTask` 只对本环境 ops 任务族且附 `ecs:cluster` 条件；`ecs:DescribeTasks/ListTasks/StopTask` 只对本集群的任务；`iam:PassRole` 只针对本环境任务角色并附 `iam:PassedToService`；`ssm:PutParameter` 只对 `<ssm_prefix>/<env>/current_image_tag`；`rds:CreateDBSnapshot/DeleteDBSnapshot` 只对本环境 `predeploy-*` 前缀（只在开启快照的环境授予）；`ecr:DescribeImages/DescribeImageScanFindings` 只对本项目仓库。
+- 部署项目：`ecs:RunTask` 只对本环境 ops 任务族且附 `ecs:cluster` 条件；`ecs:DescribeTasks/ListTasks/StopTask` 只对本集群的任务；`iam:PassRole` 只针对本环境任务角色并附 `iam:PassedToService`；`ssm:PutParameter` 只对 `<SSM_PREFIX>/<ENV>/current_image_tag`；`rds:CreateDBSnapshot/DeleteDBSnapshot` 只对本环境 `predeploy-*` 前缀（只在开启快照的环境授予）；`ecr:DescribeImages/DescribeImageScanFindings` 只对本项目仓库。
 - 构建项目：`ecr:BatchDeleteImage` 只对本项目仓库，用于隔离被扫描门禁阻断的镜像。
 
 ## 已知风险与例外

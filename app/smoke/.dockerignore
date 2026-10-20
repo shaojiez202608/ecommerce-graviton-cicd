@@ -1,0 +1,7 @@
+# Build context for CodeBuild: only what the Dockerfile copies.
+**/.git
+**/.DS_Store
+**/__pycache__
+**/*.log
+**/.env*
+**/*.zip

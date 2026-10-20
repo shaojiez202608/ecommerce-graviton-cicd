@@ -68,7 +68,7 @@ def resolve_image_tags(selected: list[str], image_tag: str | None, image_tags: d
     if image_tag:
         if len(selected) != 1:
             raise ValueError("-c imageTag applies to one environment only; with several environments use "
-                             "-c imageTags=dev=<tag>,test=<tag> (or -c envs=<env>)")
+                             "-c imageTags=dev=<TAG>,test=<TAG> (or -c envs=<ENV>)")
         return {selected[0]: image_tag, **image_tags}
     return dict(image_tags)
 
@@ -79,6 +79,6 @@ def parse_image_tags(raw: str | None) -> dict[str, str]:
     for part in filter(None, (raw or "").split(",")):
         env, sep, tag = part.partition("=")
         if not sep or not env or not tag:
-            raise ValueError(f"imageTags entry {part!r} must look like <env>=<tag>")
+            raise ValueError(f"imageTags entry {part!r} must look like <ENV>=<TAG>")
         out[env.strip()] = tag.strip()
     return out

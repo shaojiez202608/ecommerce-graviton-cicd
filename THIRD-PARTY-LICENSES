@@ -1,0 +1,81 @@
+# Third-party licenses
+
+This repository is licensed under MIT-0 (see `LICENSE`). It does **not** relicense any third-party
+component: each component listed below remains under its own license, and you are responsible for
+complying with those licenses when you build, deploy or distribute anything produced from this
+repository. Licenses were taken from installed package metadata (`importlib.metadata`, npm
+`package.json`) or from the upstream repository's license file, checked on 2026-10-21.
+
+## 1. Distributed with this repository
+
+| Component | Location | License | Note |
+|---|---|---|---|
+| (no third-party source code is vendored) | — | — | All code in this repository is original and MIT-0 |
+| Magento module list and store/theme configuration | `app/magento/config/config.php` | Generated configuration data | Produced by Magento's own `module:enable`/config tooling (see `scripts/export_magento_config.sh`); it lists module names and default scope/theme settings, no Magento source code |
+
+## 2. Downloaded at build or deploy time (not included in this repository)
+
+### Build and runtime images (CodeBuild, linux/arm64)
+
+| Component | Where it is fetched | License | Source checked |
+|---|---|---|---|
+| Magento Open Source 2.4.8-p5 | `git clone` from https://github.com/magento/magento2 during the image build | OSL-3.0 (`LICENSE.txt`), AFL-3.0 for parts (`LICENSE_AFL.txt`) | https://github.com/magento/magento2/blob/2.4-develop/LICENSE.txt |
+| Magento's Composer dependencies | `composer install` during the image build | Various (see Magento's `composer.lock` and each package) | https://github.com/magento/magento2/blob/2.4-develop/composer.lock |
+| PHP 8.3 (Docker Official Image via ECR Public) | `public.ecr.aws/docker/library/php:8.3-fpm-bookworm` | PHP License v3.01 | https://github.com/php/php-src/blob/PHP-8.3/LICENSE |
+| Composer 2 (binary copied from the official image) | `public.ecr.aws/docker/library/composer:2` | MIT | https://github.com/composer/composer/blob/main/LICENSE |
+| nginx (Debian `nginx-light`) and other Debian packages | Debian bookworm repositories during the image build | nginx: BSD-2-Clause; others: per package (`/usr/share/doc/*/copyright` in the image) | https://nginx.org/LICENSE |
+| Amazon RDS CA bundle | https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem | Provided by AWS for TLS to RDS | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html |
+
+### Tooling
+
+| Component | Version | License |
+|---|---|---|
+| AWS CDK CLI (`npx -y aws-cdk@2`) | 2.x (2.1146.0 used for verification) | Apache-2.0 |
+
+### Python packages (from `uv.lock`)
+
+| Package | Version | License |
+|---|---|---|
+| attrs | 26.1.0 | MIT |
+| aws-cdk-asset-awscli-v1 | 2.2.292 | Apache-2.0 |
+| aws-cdk-asset-node-proxy-agent-v6 | 2.1.3 | Apache-2.0 |
+| aws-cdk-cloud-assembly-schema | 54.26.0 | Apache-2.0 |
+| aws-cdk-lib | 2.273.0 | Apache-2.0 |
+| boto3 | 1.43.115 | Apache-2.0 |
+| botocore | 1.43.115 | Apache-2.0 |
+| cattrs | 26.2.1 | MIT |
+| cdk-nag | 3.0.2 | Apache-2.0 |
+| certifi | 2026.10.19 | MPL-2.0 |
+| cffi | 2.1.1 | MIT-0 |
+| charset-normalizer | 3.5.2 | MIT |
+| colorama | 0.4.6 | not installed locally (optional dependency); see PyPI metadata |
+| constructs | 10.8.1 | Apache-2.0 |
+| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
+| docker | 7.2.0 | Apache-2.0 |
+| idna | 3.20 | BSD-3-Clause |
+| iniconfig | 2.3.1 | MIT |
+| jmespath | 1.1.0 | MIT |
+| jsii | 1.142.0 | Apache-2.0 |
+| jsonpath-ng | 1.11.0 | Apache-2.0 |
+| markupsafe | 3.0.4 | BSD-3-Clause |
+| moto | 5.2.4 | Apache-2.0 |
+| packaging | 26.3 | Apache-2.0 OR BSD-2-Clause |
+| pluggy | 1.7.0 | MIT |
+| publication | 0.0.3 | MIT License |
+| py-partiql-parser | 0.6.3 | MIT |
+| pycparser | 3.11 | BSD-3-Clause |
+| pygments | 2.21.0 | BSD-2-Clause |
+| pytest | 9.1.1 | MIT |
+| python-dateutil | 2.9.0.post0 | "Dual License" in metadata; classifiers list Apache-2.0 and BSD |
+| pywin32 | 312 | not installed locally (optional dependency); see PyPI metadata |
+| pyyaml | 6.0.3 | MIT |
+| requests | 2.34.2 | Apache-2.0 |
+| responses | 0.26.3 | Apache-2.0 |
+| ruff | 0.17.1 | MIT |
+| s3transfer | 0.19.3 | Apache License 2.0 |
+| six | 1.17.0 | MIT |
+| typeguard | 2.13.3 | MIT |
+| typing-extensions | 4.16.0 | PSF-2.0 |
+| urllib3 | 2.8.0 | MIT |
+| werkzeug | 3.1.9 | BSD-3-Clause |
+| xmltodict | 1.0.4 | MIT |

@@ -5,7 +5,7 @@
 #   module list : bin/magento module:enable --all over Magento + app/magento/modules
 #   scopes/i18n : merged from app/magento/config/config.scopes.php
 # Uses the working tree of app/magento (no commit needed). Needs the cicd stack deployed.
-# Usage: [ECOM_CONFIG=config/<profile>.json] scripts/export_magento_config.sh
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] scripts/export_magento_config.sh
 set -euo pipefail
 source "$(dirname "$0")/lib/prefix.sh"
 ROOT=$(git rev-parse --show-toplevel)

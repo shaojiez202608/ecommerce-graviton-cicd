@@ -1,6 +1,6 @@
 """Build once, promote everywhere: ECR, S3 source bucket, arm64 CodeBuild image build, and one
 CodePipeline (V2) per configured branch flow with manual approvals and stage rollback.
-Stack: <project>-cicd. Per-environment deploy projects live in each platform stack and are
+Stack: <PROJECT>-cicd. Per-environment deploy projects live in each platform stack and are
 referenced by name, so this stack has no cross-stack exports.
 """
 

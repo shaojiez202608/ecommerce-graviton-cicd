@@ -5,7 +5,7 @@
 #   3. region/service availability for the configured instance classes and engine versions; quotas
 #   4. `cdk diff`: refuses deletions/replacements unless ALLOW_DESTRUCTIVE=1 (data stores in
 #      protected environments also need ALLOW_DATA_REPLACEMENT=1), see scripts/check_destructive.py
-# Usage: [ECOM_CONFIG=config/<profile>.json] [CONFIRM=<last-4-digits>] scripts/preflight.sh
+# Usage: [ECOM_CONFIG=config/<PROFILE>.json] [CONFIRM=<LAST_4_DIGITS>] scripts/preflight.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/prefix.sh"
@@ -31,7 +31,7 @@ if [ "${CONFIRM:-}" != "$LAST4" ]; then
     read -r -p "  type the last 4 digits of the account to confirm: " answer
     [ "$answer" = "$LAST4" ] || { bad "account not confirmed; stop if this is not your intended account"; exit 1; }
   else
-    bad "set CONFIRM=<last 4 digits of the target account> (non-interactive run)"; exit 1
+    bad "set CONFIRM=<LAST_4_DIGITS_OF_THE_TARGET_ACCOUNT> (non-interactive run)"; exit 1
   fi
 fi
 ok "account and region confirmed"
