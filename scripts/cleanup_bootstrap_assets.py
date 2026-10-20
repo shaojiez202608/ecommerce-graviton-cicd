@@ -26,9 +26,9 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import zipfile
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 import boto3
@@ -56,7 +56,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--assembly", action="append", default=None, help="cloud assembly dir(s), default cdk.out")
     ap.add_argument("--hash-list", action="append", default=[], help="JSON list of object keys from older synths")
-    ap.add_argument("--prefix", default="proto-ecom", help="stack-name prefix of this project's assets.json files")
+    ap.add_argument("--config", default="config/sandbox.json", help="profile whose 'project' is the stack prefix")
+    ap.add_argument("--prefix", default=None, help="overrides the profile's project prefix")
     ap.add_argument("--extra-prefix", action="append", default=[], help="older stack prefixes to include")
     ap.add_argument("--qualifier", default="hnb659fds")
     ap.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
@@ -65,6 +66,10 @@ def main() -> int:
     ap.add_argument("--tag-value", default="ecommerce-graviton-cicd")
     args = ap.parse_args()
 
+    if not args.prefix:
+        cfg = Path(__file__).resolve().parents[1] / args.config
+        cfg = cfg if cfg.exists() else cfg.with_name(cfg.stem + ".example.json")
+        args.prefix = json.loads(cfg.read_text())["project"]
     keys: set[str] = set()
     for d in args.assembly or ["cdk.out"]:
         for prefix in [args.prefix, *args.extra_prefix]:
