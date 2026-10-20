@@ -66,6 +66,7 @@ COPY docker/build-env.php /usr/local/lib/magento/env-tool.php
 COPY docker/entrypoint.sh /usr/local/bin/magento-entrypoint
 COPY docker/migrate.sh /usr/local/bin/magento-migrate
 COPY docker/cache-flush.sh /usr/local/bin/magento-cache-flush
+COPY docker/maintenance.sh /usr/local/bin/magento-maintenance
 RUN chmod 0755 /usr/local/bin/magento-* && mkdir -p /tmp/nginx && chown -R www-data:www-data /tmp/nginx \
     && echo "${MAGENTO_REF:-unknown}" > /var/www/magento/.image-magento-ref
 USER www-data

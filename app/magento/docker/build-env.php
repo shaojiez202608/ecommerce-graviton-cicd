@@ -4,6 +4,7 @@
  *   merge-config <overlay.php> <config.php>  merge scopes/themes into config.php (build time)
  *   write-stub   <env.php> [nodb]            write a placeholder env.php for di:compile/SCD (build time)
  *   render       <env.php>                   write the real env.php from environment variables (run time)
+ *   hold-lock    <name> <statusfile> <pid>   take MySQL GET_LOCK(name) and hold it while <pid> lives (run time)
  * Runtime values come from ECS task secrets (AWS Secrets Manager) and SSM parameters
  * injected as environment variables (Magento key point 2). No value is baked into the image.
  */
@@ -126,7 +127,29 @@ switch ($command) {
         chmod($a, 0640);
         break;
 
+    case 'hold-lock':
+        // Session-scoped named lock: released automatically if this process or its connection dies.
+        [$name, $status, $owner] = [$a, $b, (int) ($argv[4] ?? 0)];
+        try {
+            $pdo = new PDO('mysql:host=' . env_required('MAGENTO_DB_HOST'), env_required('MAGENTO_DB_MASTER_USER'),
+                env_required('MAGENTO_DB_MASTER_PASSWORD'),
+                [PDO::MYSQL_ATTR_SSL_CA => '/etc/ssl/certs/rds-global-bundle.pem', PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $got = (int) $pdo->query('SELECT GET_LOCK(' . $pdo->quote(substr($name, 0, 64)) . ', 0)')->fetchColumn();
+        } catch (Throwable $t) {
+            fwrite(STDERR, "lock: " . $t->getMessage() . "\n");
+            $got = 0;
+        }
+        file_put_contents($status, $got === 1 ? 'ok' : 'busy');
+        if ($got !== 1) {
+            exit(3);
+        }
+        while ($owner > 0 && file_exists("/proc/{$owner}")) {
+            sleep(2);
+            $pdo->query('SELECT 1');  // keep the session (and the lock) alive
+        }
+        break;
+
     default:
-        fwrite(STDERR, "usage: {$script} merge-config|write-stub|render ...\n");
+        fwrite(STDERR, "usage: {$script} merge-config|write-stub|render|hold-lock ...\n");
         exit(64);
 }

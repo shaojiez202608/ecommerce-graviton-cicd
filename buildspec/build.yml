@@ -42,10 +42,12 @@ phases:
     commands:
       - set -euo pipefail
       # Scan gate: wait for the ECR scan (basic or enhanced) and block on configured severities.
-      - python3 scripts/build/scan_gate.py "$IMAGE_REPO_NAME" "$IMAGE_TAG" "$BLOCK_SEVERITIES" "${SCAN_TIMEOUT_SECONDS:-900}" "${SCAN_UNAVAILABLE_ACTION:-fail}"
+      # A blocked image is quarantined (tag removed, digest kept as quarantine-<tag>); every deploy
+      # re-checks the scan result before promoting (scripts/deploy/ecs_deploy.sh).
+      - python3 scripts/build/scan_gate.py "$IMAGE_REPO_NAME" "$IMAGE_TAG" "$BLOCK_SEVERITIES" "${SCAN_TIMEOUT_SECONDS:-900}" "${SCAN_UNAVAILABLE_ACTION:-fail}" --quarantine
       - cat scan-counts.json
       - printf '{"imageUri":"%s","imageTag":"%s","revision":"%s","variant":"%s"}\n' "$IMAGE_URI" "$IMAGE_TAG" "$REVISION" "$IMAGE_VARIANT" > imageDetail.json
-      - mkdir -p deploy && cp scripts/deploy/*.sh deploy/
+      - mkdir -p deploy && cp scripts/deploy/*.sh scripts/build/scan_gate.py deploy/
 artifacts:
   files:
     - imageDetail.json

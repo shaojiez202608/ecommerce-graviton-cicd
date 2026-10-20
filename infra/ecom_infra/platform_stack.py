@@ -358,6 +358,10 @@ class PlatformStack(Stack):
             container = td.add_container(
                 "web",
                 container_name="web",
+                # init process forwards SIGTERM (ECS stop / deploy timeout) to the scripts so their
+                # traps run; one-off tasks get the longest stop timeout Fargate allows.
+                linux_parameters=ecs.LinuxParameters(self, f"{construct_id}Linux", init_process_enabled=True),
+                stop_timeout=Duration.seconds(120) if command is not None else None,
                 image=ecs.ContainerImage.from_ecr_repository(repo, image_ref),
                 command=command,
                 entry_point=["/usr/local/bin/magento-entrypoint"] if command is None else ["/bin/sh", "-c"],
@@ -517,6 +521,13 @@ class PlatformStack(Stack):
         )
         rule.add_target(targets.SnsTopic(self.alarm_topic))
 
+        # Image tag currently running, written by the deploy script after a successful promotion
+        # (CloudFormation only creates it; read it before re-running cdk deploy, see deployment guide).
+        self.current_tag_param = ssm.StringParameter(
+            self, "CurrentImageTag", parameter_name=app_cfg.ssm(env, "current_image_tag"),
+            string_value="bootstrap", description="Image tag last promoted by the deploy script",
+        )
+
         # ------------------------------------------------------------------ deploy project (in VPC)
         self.deploy_project = self._deploy_project(n, app_subnets, log_retention, removal)
 
@@ -539,6 +550,8 @@ class PlatformStack(Stack):
                 "desiredCount": env_cfg.desired_count,
                 "deployment": env_cfg.deployment,
                 "namePrefix": n(),
+                "predeploySnapshotsKeep": env_cfg.predeploy_snapshots_keep,
+                "maintenanceOnFailure": env_cfg.maintenance_on_failure,
                 "scheme": env_cfg.base_url_scheme,
                 "siteHost": site_host,
                 "snapshotPrefix": n("predeploy"),
@@ -604,10 +617,16 @@ class PlatformStack(Stack):
             environment_variables={
                 "TARGET_ENV": codebuild.BuildEnvironmentVariable(value=env),
                 "SSM_PREFIX": codebuild.BuildEnvironmentVariable(value=self.app_cfg.ssm_prefix),
+                # the deploy re-checks the image's scan result with the same gate as the build
+                "BLOCK_SEVERITIES": codebuild.BuildEnvironmentVariable(
+                    value=",".join(self.app_cfg.build.block_on_severities)),
+                "SCAN_UNAVAILABLE_ACTION": codebuild.BuildEnvironmentVariable(
+                    value=self.app_cfg.build.scan_unavailable_action),
             },
             build_spec=codebuild.BuildSpec.from_object({
                 "version": "0.2",
                 "phases": {"build": {"commands": [
+                    "echo \"[deploy] trigger: ${PROMOTE_REASON:-pipeline}\"",
                     "bash deploy/ecs_deploy.sh \"$TARGET_ENV\" imageDetail.json",
                     "bash deploy/smoke_test.sh \"$TARGET_ENV\"",
                 ]}},
@@ -659,9 +678,22 @@ class PlatformStack(Stack):
             actions=["s3:GetObject", "s3:GetObjectVersion"],
             resources=[f"arn:{stack.partition}:s3:::{artifact_bucket_name(self.app_cfg, stack)}/*"],
         ))
+        # Re-check the promoted image (tag present, scan result) before changing anything.
+        repo_arn = arn("ecr", f"repository/{self.app_cfg.name('magento')}")
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecr:DescribeImages", "ecr:DescribeImageScanFindings"], resources=[repo_arn],
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["inspector2:ListCoverage", "inspector2:ListFindings"],
+            resources=["*"],  # enhanced-scanning results; Inspector list actions have no resource-level permissions
+        ))
+        role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ssm:PutParameter"], resources=[self.current_tag_param.parameter_arn],
+        ))
         if self.env_cfg.snapshot_before_migrate:
             role.add_to_principal_policy(iam.PolicyStatement(
-                actions=["rds:CreateDBSnapshot", "rds:DescribeDBSnapshots", "rds:AddTagsToResource"],
+                actions=["rds:CreateDBSnapshot", "rds:DescribeDBSnapshots", "rds:AddTagsToResource",
+                         "rds:DeleteDBSnapshot"],  # delete: prune to predeploy_snapshots_keep
                 resources=[self.db.instance_arn, arn("rds", f"snapshot:{n('predeploy')}-*")],
             ))
         return project

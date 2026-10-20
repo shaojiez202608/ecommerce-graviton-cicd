@@ -95,7 +95,8 @@ class CicdStack(Stack):
         # variant) outside the pipeline; read-only, source bucket only.
         self.source_bucket.grant_read(self.build_project)
         self.build_project.add_to_role_policy(iam.PolicyStatement(
-            actions=["ecr:DescribeImages", "ecr:DescribeImageScanFindings"],
+            # BatchDeleteImage: the scan gate removes the tag of a blocked image (quarantine)
+            actions=["ecr:DescribeImages", "ecr:DescribeImageScanFindings", "ecr:BatchDeleteImage"],
             resources=[self.repo.repository_arn],
         ))
         # Scan results when the registry uses enhanced scanning (Amazon Inspector).

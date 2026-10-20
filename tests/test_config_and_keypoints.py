@@ -120,3 +120,83 @@ def test_scan_gate_counts_basic_and_enhanced():
     assert mod.severity_counts({"imageScanFindings": {"findingSeverityCounts": {"HIGH": 2}}}) == {"HIGH": 2}
     enhanced = {"imageScanFindings": {"enhancedFindings": [{"severity": "CRITICAL"}, {"severity": "LOW"}]}}
     assert mod.severity_counts(enhanced) == {"CRITICAL": 1, "LOW": 1}
+
+
+MIGRATE = (ROOT / "app" / "magento" / "docker" / "migrate.sh").read_text()
+DEPLOY = (ROOT / "scripts" / "deploy" / "ecs_deploy.sh").read_text()
+
+
+def test_migration_traps_signals_and_serializes_with_a_db_lock():
+    assert "trap cleanup EXIT" in MIGRATE and "trap 'exit 143' TERM" in MIGRATE and "trap 'exit 130' INT" in MIGRATE
+    assert "hold-lock" in MIGRATE and "exit 75" in MIGRATE
+    tool = (ROOT / "app" / "magento" / "docker" / "build-env.php").read_text()
+    assert "GET_LOCK(" in tool
+    assert MIGRATE.index("migration lock acquired") < MIGRATE.index("bin/magento setup:install")
+
+
+def test_maintenance_window_closes_only_after_new_tasks_serve():
+    upgrade_branch = MIGRATE.split("upgrade required", 1)[1]
+    assert "maintenance:enable" in upgrade_branch and "maintenance:disable" not in upgrade_branch
+    flush = (ROOT / "app" / "magento" / "docker" / "cache-flush.sh").read_text()
+    assert flush.index("cache:flush") < flush.index("maintenance:disable")
+    # deploy: migrate -> update service -> wait COMPLETED -> cache-flush (closes the window)
+    assert DEPLOY.index("magento-migrate") < DEPLOY.index("aws ecs update-service") \
+        < DEPLOY.index('"$ROLLOUT" = "COMPLETED"') < DEPLOY.rindex("magento-cache-flush")
+
+
+def test_deploy_failure_and_timeout_paths_handle_the_maintenance_flag():
+    assert "trap on_exit EXIT" in DEPLOY and 'magento-maintenance $MAINT_POLICY' in DEPLOY
+    assert "aws ecs stop-task" in DEPLOY  # timed-out one-off tasks are stopped, not abandoned
+    policy = (ROOT / "app" / "magento" / "docker" / "maintenance.sh").read_text()
+    assert 'if [ "$policy" = "disable" ]' in policy and "var/.deploy-maintenance" in policy
+    smoke = (ROOT / "app" / "smoke" / "Dockerfile").read_text()
+    assert "/usr/local/bin/magento-maintenance" in smoke
+
+
+def test_deploy_verifies_image_before_any_change():
+    gate = DEPLOY.index("--verify-only")
+    assert gate < DEPLOY.index("register \"$WEB_FAMILY\"") and gate < DEPLOY.index("create-db-snapshot")
+
+
+def test_predeploy_snapshots_are_pruned():
+    assert "delete-db-snapshot" in DEPLOY and "SNAP_KEEP" in DEPLOY
+
+
+def load_gate():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("scan_gate", ROOT / "scripts" / "build" / "scan_gate.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_scan_gate_quarantines_blocked_images(monkeypatch, tmp_path):
+    mod = load_gate()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(mod, "describe", lambda repo, tag: {
+        "imageScanStatus": {"status": "COMPLETE"}, "imageScanFindings": {"findingSeverityCounts": {"HIGH": 1}}})
+    calls = []
+
+    class R:
+        returncode, stdout, stderr = 0, '{"manifest": 1}', ""
+
+    monkeypatch.setattr(mod, "aws", lambda *a: calls.append(a) or R())
+    assert mod.main(["x", "repo", "tag1", "CRITICAL,HIGH", "5", "fail", "--quarantine"]) == 1
+    assert [c[0] for c in calls] == ["batch-get-image", "put-image", "batch-delete-image"]
+    assert "quarantine-tag1" in calls[1]
+    calls.clear()
+    assert mod.main(["x", "repo", "tag1", "CRITICAL,HIGH", "5", "fail", "--verify-only"]) == 1
+    assert calls == []  # deploy-time verification never changes tags
+    monkeypatch.setattr(mod, "describe", lambda repo, tag: {
+        "imageScanStatus": {"status": "COMPLETE"}, "imageScanFindings": {"findingSeverityCounts": {"LOW": 3}}})
+    assert mod.main(["x", "repo", "tag1", "CRITICAL,HIGH", "5", "fail", "--quarantine"]) == 0 and calls == []
+
+
+def test_promote_refuses_protected_environments_without_break_glass():
+    import subprocess
+
+    out = subprocess.run(["bash", str(ROOT / "scripts" / "promote_image.sh"), "prod", "abc"],
+                         env={"ECOM_CONFIG": "config/customer.json", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
+                         capture_output=True, text=True, check=False)
+    assert out.returncode == 2 and "refusing" in out.stderr

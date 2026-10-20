@@ -11,9 +11,10 @@ from ecom_infra.app_builder import build_app
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def synth(profile: str, image_tag=None, nag=True):
+def synth(profile: str, image_tag=None, nag=True, image_tags=None, only_envs=None):
     app = cdk.App(context={"@aws-cdk/customresources:installLatestAwsSdkDefault": False})
     stacks = build_app(app, config_path=str(ROOT / "config" / f"{profile}.json"), image_tag=image_tag, nag=nag,
+                       image_tags=image_tags, only_envs=only_envs,
                        synth_check=(profile == "customer"))
     return app, {name: Template.from_stack(s) for name, s in stacks.items()}
 
@@ -25,7 +26,7 @@ def sandbox():
 
 @pytest.fixture(scope="module")
 def customer():
-    return synth("customer", image_tag="abc123")[1]
+    return synth("customer", image_tags={e: "abc123" for e in ("dev", "test", "uat", "prod")})[1]
 
 
 def all_resources(templates, rtype):
@@ -195,7 +196,7 @@ def test_scripts_do_not_hard_code_the_prefix():
 
 
 def test_snapshot_name_and_iam_grant_share_the_configured_prefix():
-    _, templates = synth("customer", image_tag="abc123")
+    _, templates = synth("customer", image_tags={"uat": "abc123"})
     t = json.dumps(templates["proto-ecom-uat-platform"].to_json())
     # deploy script names snapshots "<snapshotPrefix>-<timestamp>"; IAM allows "<project>-<env>-predeploy-*"
     assert '\\"snapshotPrefix\\":\\"proto-ecom-uat-predeploy\\"' in t
@@ -278,3 +279,46 @@ def test_mcf_outbox_index_and_cancel_route(sandbox):
     assert {g["IndexName"] for g in table["GlobalSecondaryIndexes"]} == {"gsi1", "gsi2"}
     t.has_resource_properties("AWS::Events::Rule", {"EventPattern": {
         "source": ["storefront.orders"], "detail-type": ["Order Paid", "Order Cancelled"]}})
+
+
+def test_image_tag_is_per_environment():
+    from ecom_infra.app_builder import parse_image_tags, resolve_image_tags
+    with pytest.raises(ValueError, match="one environment only"):
+        resolve_image_tags(["dev", "test"], "abc", {})
+    assert resolve_image_tags(["dev"], "abc", {}) == {"dev": "abc"}
+    assert parse_image_tags("dev=a,prod=b") == {"dev": "a", "prod": "b"}
+    with pytest.raises(ValueError, match="not synthesized"):
+        resolve_image_tags(["dev"], None, {"prod": "x"})
+    _, t = synth("customer", nag=False, image_tags={"prod": "p1"})
+    prod = t["proto-ecom-prod-platform"].find_resources("AWS::ECS::TaskDefinition")
+    dev = t["proto-ecom-dev-platform"].find_resources("AWS::ECS::TaskDefinition")
+    assert ":p1" in json.dumps(prod) and ":p1" not in json.dumps(dev) and ":bootstrap" in json.dumps(dev)
+    t["proto-ecom-dev-platform"].has_resource_properties("AWS::ECS::Service", {"DesiredCount": 0})
+
+
+def test_tasks_run_with_an_init_process_and_ops_stop_timeout(sandbox):
+    tds = sandbox["proto-ecom-dev-platform"].find_resources("AWS::ECS::TaskDefinition")
+    for td in tds.values():
+        c = td["Properties"]["ContainerDefinitions"][0]
+        assert c["LinuxParameters"]["InitProcessEnabled"] is True
+    ops = next(td for td in tds.values() if td["Properties"]["Family"].endswith("-ops"))
+    assert ops["Properties"]["ContainerDefinitions"][0]["StopTimeout"] == 120
+
+
+def test_deploy_project_rechecks_scan_with_the_build_gate_settings(sandbox, customer):
+    for templates, sev in ((sandbox, "CRITICAL"), (customer, "CRITICAL,HIGH")):
+        t = templates["proto-ecom-dev-platform"]
+        project = next(p for p in t.find_resources("AWS::CodeBuild::Project").values()
+                       if p["Properties"]["Name"].endswith("-deploy"))
+        env = {v["Name"]: v["Value"] for v in project["Properties"]["Environment"]["EnvironmentVariables"]}
+        assert env["BLOCK_SEVERITIES"] == sev and env["SCAN_UNAVAILABLE_ACTION"] in ("fail", "warn")
+    assert "ecr:DescribeImageScanFindings" in json.dumps(customer["proto-ecom-prod-platform"].find_resources(
+        "AWS::IAM::Policy"))
+    cicd = json.dumps(customer["proto-ecom-cicd"].find_resources("AWS::IAM::Policy"))
+    assert "ecr:BatchDeleteImage" in cicd  # quarantine of blocked images
+
+
+def test_predeploy_snapshot_pruning_is_granted_only_where_snapshots_are_taken(customer):
+    prod = json.dumps(customer["proto-ecom-prod-platform"].find_resources("AWS::IAM::Policy"))
+    dev = json.dumps(customer["proto-ecom-dev-platform"].find_resources("AWS::IAM::Policy"))
+    assert "rds:DeleteDBSnapshot" in prod and "rds:DeleteDBSnapshot" not in dev
