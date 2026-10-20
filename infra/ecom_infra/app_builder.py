@@ -51,7 +51,7 @@ def build_app(
         cdk.Tags.of(app).add(key, value)
     for stack in stacks.values():
         env_name = getattr(stack, "env_name", None)
-        apply_suppressions(stack, cfg.project, cfg.ssm_prefix, env_name)
+        apply_suppressions(stack, cfg, cfg.environments[env_name] if env_name else None)
     if nag:
         cdk.Validations.of(app).add_plugins(AwsSolutionsChecks(app, verbose=True))
     return stacks

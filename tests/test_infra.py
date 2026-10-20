@@ -322,3 +322,34 @@ def test_predeploy_snapshot_pruning_is_granted_only_where_snapshots_are_taken(cu
     prod = json.dumps(customer["proto-ecom-prod-platform"].find_resources("AWS::IAM::Policy"))
     dev = json.dumps(customer["proto-ecom-dev-platform"].find_resources("AWS::IAM::Policy"))
     assert "rds:DeleteDBSnapshot" in prod and "rds:DeleteDBSnapshot" not in dev
+
+
+def test_nag_acknowledgements_are_attached_to_specific_constructs():
+    from ecom_infra.config import load
+    from ecom_infra.nag import Ack, acknowledgements
+
+    app = cdk.App(context={"@aws-cdk/customresources:installLatestAwsSdkDefault": False})
+    stacks = build_app(app, config_path=str(ROOT / "config" / "customer.json"), nag=False, synth_check=True)
+    cfg = load(ROOT / "config" / "customer.json", synth_check=True)
+    for name, stack in stacks.items():
+        env = cfg.environments.get(getattr(stack, "env_name", "") or "")
+        pairs = acknowledgements(stack, cfg, env)
+        assert pairs and all(node is not stack for node, _ in pairs), name
+        wildcard = [node.node.path for node, a in pairs if a.id.endswith("IAM5[Resource::*]")]
+        assert all(p.endswith("/Resource") for p in wildcard), wildcard
+        for _, a in pairs:
+            assert "ELB Describe" not in a.reason
+    # snapshot / blue-green acknowledgements only where those features exist
+    prod = {a.id for _, a in acknowledgements(stacks["proto-ecom-prod-platform"], cfg, cfg.environments["prod"])}
+    dev = {a.id for _, a in acknowledgements(stacks["proto-ecom-dev-platform"], cfg, cfg.environments["dev"])}
+    assert any("predeploy" in i for i in prod) and not any("predeploy" in i for i in dev)
+    assert any("shouldUseCircuitBreaker" in i for i in prod) and not any("shouldUseCircuitBreaker" in i for i in dev)
+    assert not any(i.endswith("RDS3") for i in prod) and any(i.endswith("RDS3") for i in dev)
+    import ecom_infra.nag as nag
+    orig = nag.MCF
+    try:
+        nag.BY_KIND["mcf"] = [Ack("NoSuchConstruct", "S1", "x")]
+        with pytest.raises(ValueError, match="matches no construct"):
+            acknowledgements(stacks["proto-ecom-dev-mcf"], cfg, cfg.environments["dev"])
+    finally:
+        nag.BY_KIND["mcf"] = orig

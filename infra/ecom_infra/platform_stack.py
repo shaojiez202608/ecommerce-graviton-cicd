@@ -650,16 +650,12 @@ class PlatformStack(Stack):
             resources=[self.service.service_arn],
         ))
         role.add_to_principal_policy(iam.PolicyStatement(
-            actions=["ecs:ListServiceDeployments", "ecs:DescribeServiceDeployments"],
-            resources=["*"],  # service deployment ARNs are generated per deployment
-        ))
-        role.add_to_principal_policy(iam.PolicyStatement(
             actions=["ecs:RunTask"],
             resources=[arn("ecs", f"task-definition/{n('ops')}:*")],
             conditions={"ArnEquals": {"ecs:cluster": self.cluster.cluster_arn}},
         ))
         role.add_to_principal_policy(iam.PolicyStatement(
-            actions=["ecs:DescribeTasks", "ecs:ListTasks"],
+            actions=["ecs:DescribeTasks", "ecs:ListTasks", "ecs:StopTask"],  # StopTask: timed-out one-off tasks
             resources=[arn("ecs", f"task/{self.cluster.cluster_name}/*"),
                        arn("ecs", f"container-instance/{self.cluster.cluster_name}/*")],
         ))
