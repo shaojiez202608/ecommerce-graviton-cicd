@@ -66,6 +66,9 @@
 
 ## 6. 未运行 / 未验证
 
+- **「setup:upgrade + 维护模式」分支在本记录中未实测**：V-6 走的是「All modules are up to date」（只导入配置、不进维护模式）。
+- **回滚到真实旧 Magento 镜像时的迁移检查未实测**：V-7 的回滚目标是 smoke 镜像，不是旧版 Magento 镜像。
+
 - live SP-API 客户端未对任何真实卖家账户运行（只做了假传输层单元测试）；SigV4 是否必要未确认（Q-13）。
 - test/uat/prod 环境、`release` 流水线、两道审批与 ECS 原生蓝绿只通过 CDK assertions 验证，**未部署**。
 - ECS 断路器自动回滚未触发过（部署脚本在迁移失败时就停下，从未推送坏镜像到服务）。

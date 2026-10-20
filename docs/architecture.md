@@ -1,6 +1,6 @@
 # 架构
 
-> Prototype，不用于生产。场景：某 IoT 厂商的海外独立站（开源 PHP 电商框架 Magento Open Source），先建测试环境与构建发布流程，订单经 Amazon Multi-Channel Fulfillment（MCF）履约。
+> Prototype，不用于生产。场景：某 IoT 厂商的海外独立站（开源 PHP 电商框架 Magento Open Source），先建测试环境与构建发布流程，订单经 Amazon Multi-Channel Fulfillment（MCF）履约。mermaid 图是架构的事实来源。
 
 ## 1. 总览
 
@@ -12,7 +12,7 @@ flowchart LR
   Z -->|"PutObject source/&lt;flow&gt;.zip"| S3[("S3 源桶<br/>版本化/BPA/TLS")]
   S3 -->|"EventBridge: Object Created"| P
 
-  subgraph CICD["proto-ecom-cicd"]
+  subgraph CICD["&lt;project&gt;-cicd"]
     P["CodePipeline V2 (QUEUED)"] --> B["CodeBuild ARM_CONTAINER<br/>amazonlinux-aarch64-standard:3.0<br/>docker build linux/arm64"]
     B -->|"push :&lt;SHA&gt; (immutable)"| ECR[("ECR<br/>scan on push")]
     B -->|"扫描门禁"| ECR
@@ -20,9 +20,9 @@ flowchart LR
     D1 --> A1{{"审批① QA"}} --> D2["Deploy-uat (蓝绿)"] --> A2{{"审批② 业务"}} --> D3["Deploy-prod (蓝绿)"]
   end
 
-  subgraph ENV["proto-ecom-&lt;env&gt;-platform（每环境独立 VPC）"]
+  subgraph ENV["&lt;project&gt;-&lt;env&gt;-platform（每环境独立 VPC）"]
     DP["CodeBuild 部署项目（VPC 内）<br/>ecs_deploy.sh + smoke_test.sh"]
-    ALB["内部 ALB<br/>仅 VPC/内网 CIDR"] --> WEB["ECS Fargate ARM64<br/>nginx + php-fpm 8.3"]
+    ALB["内部 ALB<br/>http:80 或 https:443（ACM 证书）<br/>仅 VPC/内网 CIDR"] --> WEB["ECS Fargate ARM64<br/>nginx + php-fpm 8.3"]
     OPS["一次性任务（同镜像）<br/>migrate / cache:flush"]
     WEB --> RDS[("RDS for MySQL 8.4<br/>Graviton, TLS")]
     WEB --> VK[("ElastiCache Valkey 8.1<br/>Graviton, TLS+AUTH")]
@@ -36,72 +36,92 @@ flowchart LR
   D1 & D2 & D3 -->|"StartBuild"| DP
   DP -->|"RunTask(迁移)→UpdateService→RunTask(cache:flush)"| WEB
 
-  subgraph MCF["proto-ecom-&lt;env&gt;-mcf"]
-    BUS["EventBridge 自定义总线"] -->|"Order Paid"| Q["SQS + DLQ"] --> L1["Lambda arm64<br/>order_intake"]
+  subgraph MCF["&lt;project&gt;-&lt;env&gt;-mcf"]
+    BUS["EventBridge 自定义总线"] -->|"Order Paid / Order Cancelled"| Q["SQS + DLQ"] --> L1["Lambda arm64<br/>order_intake"]
     SCH["EventBridge 定时"] --> L2["Lambda arm64<br/>tracking_poller"]
     SCH --> L3["Lambda arm64<br/>inventory_sync"]
-    L1 & L2 & L3 --> T[("DynamoDB 单表<br/>订单状态/SKU 映射/mock 状态")]
+    L1 & L2 & L3 --> T[("DynamoDB 单表<br/>订单状态 + outbox / SKU 映射 / mock 状态")]
     L1 & L2 & L3 --> SP["SP-API 调用层<br/>默认 mock / live 需显式开启"]
     L1 & L2 & L3 -->|"Shipped/Delivered/Inventory/Exception"| BUS
     BUS --> LOG["日志组（店铺侧消费者替身）"]
     BUS -->|"Fulfillment Exception"| SNS["SNS 告警"]
   end
-  WEB -. "店铺模块发布 Order Paid（未实现，见 Q-05）" .-> BUS
+  WEB -. "店铺模块发布 Order Paid/Cancelled（未实现，见 Q-05）" .-> BUS
 ```
 
-栈：`proto-ecom-cicd`（ECR、源/产物桶、构建项目、流水线、审批主题），`proto-ecom-<env>-platform`（每环境一个 VPC 与全部运行时资源 + 该环境的部署项目），`proto-ecom-<env>-mcf`（履约桥接）。流水线按名字引用各环境部署项目，栈之间没有 CloudFormation 导出，任意环境可单独部署或删除。
+栈：`<project>-cicd`（ECR、源/产物桶、构建项目、流水线、审批主题），`<project>-<env>-platform`（每环境一个 VPC 与全部运行时资源 + 该环境的部署项目），`<project>-<env>-mcf`（履约桥接）。`<project>` 与 SSM 前缀来自配置文件（默认 `proto-ecom`、`/proto-ecom`），脚本从配置或部署元数据读取，不写死。流水线按名字引用各环境部署项目，栈之间没有 CloudFormation 导出，任意环境可单独部署或删除。
 
 ## 2. Magento 的 4 个 CI/CD 关键点如何落地
 
 | 关键点 | 落地位置 | 做法 |
 |---|---|---|
-| 1. 不可变镜像 | `app/magento/Dockerfile`（builder 阶段）、`buildspec/build.yml` | `composer install --no-dev`、`setup:di:compile`、`setup:static-content:deploy` 都在构建阶段执行；为了不连数据库，构建时写入一个不含真实连接的 `env.php` 存根并把 `scopes/themes` 合并进 `config.php`，构建结束删除存根。镜像 tag = commit SHA，ECR 设为不可变 tag；同一 SHA 已存在则复用，不重复构建 |
-| 2. 配置分离 | `app/magento/config/config.scopes.php`（进 Git）、`app/magento/docker/build-env.php render`、ECS secrets | `config.php` 类内容进 Git；`env.php` 在容器启动时由环境变量渲染。数据库/OpenSearch/Valkey 凭证与 crypt key 来自 Secrets Manager，`base_url`、后台路径来自 SSM 参数（`/<prefix>/<env>/...`），均通过 ECS `secrets` 注入；`base_url` 写入 `env.php` 的 `system` 段 |
-| 3. 数据库迁移单点执行 | `app/magento/docker/migrate.sh`、`scripts/deploy/ecs_deploy.sh` | 部署脚本在更新服务**之前**启动**一个**一次性 ECS 任务：先用主用户确保最小权限的应用库用户存在（主用户凭证只注入这个任务），空库时 `setup:install`；否则 `setup:db:status` 判断，需要升级才开维护模式执行 `setup:upgrade --keep-generated`。`var/` 在 EFS 上，维护标志对所有 Web 任务可见。脚本发现已有运行中的 ops 任务就拒绝启动；流水线执行模式为 QUEUED，同一条流水线不会并发执行同一阶段。Web 容器入口从不执行迁移 |
-| 4. 零停机与缓存 | `platform_stack.py`、`ecs_deploy.sh` | dev/test：滚动更新（最小健康 100%）+ 断路器自动回滚；uat/prod：ECS 原生蓝绿（绿组验证、切换生产监听规则、bake time 内保留蓝组）。服务稳定后再跑一次性 `cache:flush` 任务（缓存与整页缓存在共享 Valkey 中） |
+| 1. 不可变镜像 | `app/magento/Dockerfile`（source/builder 阶段）、`buildspec/build.yml` | `composer install --no-dev`、`setup:di:compile`、`setup:static-content:deploy` 都在构建阶段执行；为了不连数据库，构建时写入不含真实连接的 `env.php` 存根，构建结束删除。镜像 tag = commit SHA，ECR 不可变 tag；同一 SHA 已存在则复用 |
+| 2. 配置分离 | `app/magento/config/config.php`（进 Git）、`app/magento/docker/build-env.php render`、ECS secrets | `app/etc/config.php`（模块、scopes、themes、i18n）提交到 Git，构建直接使用并校验与代码中的模块一致（不一致则构建失败，用 Dockerfile 的 `config-export` 目标或 `scripts/export_magento_config.sh` 重新生成）。`env.php` 在容器启动时由环境变量渲染：数据库/OpenSearch/Valkey 凭证与 crypt key 来自 Secrets Manager，`base_url`、后台路径来自 SSM 参数（`<ssm_prefix>/<env>/...`），均通过 ECS `secrets` 注入 |
+| 3. 数据库迁移单点执行 | `app/magento/docker/migrate.sh`、`scripts/deploy/ecs_deploy.sh` | 部署脚本在更新服务**之前**启动**一个**一次性 ECS 任务；脚本拒绝在已有 ops 任务运行时再启动；迁移脚本再持有 MySQL `GET_LOCK`（会话级，任务退出或连接断开即释放），第二个迁移立即失败。空库 `setup:install`；否则 `setup:db:status` 判断，需要升级才开维护模式执行 `setup:upgrade --keep-generated`。任务带 init 进程，SIGTERM 能触发脚本的清理陷阱。Web 容器入口从不执行迁移 |
+| 4. 零停机与缓存 | `platform_stack.py`、`ecs_deploy.sh`、`cache-flush.sh` | dev/test：滚动更新（最小健康 100%）+ 断路器自动回滚；uat/prod：ECS 原生蓝绿（bake time 内保留蓝组）。服务稳定后再跑一次性 `cache:flush` 任务；本次部署开过维护模式的，`cache:flush` 之后才关闭（见 §3） |
 
 ## 3. 多环境晋级、审批与回滚
 
 - 两条流水线：`develop`（dev，自动）和 `release`（test 自动 + 冒烟 → 审批① → uat 蓝绿 → 审批② → prod 蓝绿）。每条流水线只有一个构建动作，后续所有部署阶段输入同一个构建产物 `imageDetail.json`（同一 SHA 镜像）。环境差异只来自运行时注入的参数。
-- 冒烟：部署项目在该环境 VPC 内对内部 ALB 请求 `/health_check.php` 与 `/`。
+- 镜像门禁：构建后扫描门禁阻断的镜像被隔离（删除可晋级的 tag，摘要保留为 `quarantine-<tag>`）；每次部署开始时用同一门禁参数复查 tag 与扫描结果，复查不过就不做任何变更（也覆盖 `scripts/promote_image.sh`）。`promote_image.sh` 对有审批的环境默认拒绝，需 `--break-glass "<理由>"`。
+- 冒烟：部署项目在该环境 VPC 内访问内部 ALB 的 `/health_check.php` 与 `/`；https 环境用证书主机名并校验证书（`curl --connect-to` 指向 ALB）。
+- 有 schema 变更的发布顺序：迁移任务开维护模式并 `setup:upgrade` → 更新服务（维护期间健康检查 `/health_check.php` 不受维护模式影响，新任务照常通过）→ PRIMARY 部署为新修订且 COMPLETED → `cache:flush` → 关闭维护模式。这样旧代码不会在切换期间服务已升级的 schema。
+- 迁移开始后的任何失败（迁移失败、超时被停止、滚动/蓝绿回滚、cache:flush 失败），部署脚本的 EXIT 陷阱按环境参数 `maintenance_on_failure` 跑一次维护任务：`disable`（dev/test 默认）关闭维护模式，恢复访问，代价是可能出现旧代码 + 新 schema；`keep`（uat/prod 默认）保持维护模式，由人从迁移前快照恢复或完成发布。迁移在 `setup:upgrade` 开始前失败的，迁移脚本自己关闭维护模式。
 - 回滚分三层：
-  1. **ECS 层**：滚动更新的断路器在新任务起不来或健康检查失败时回到上一个 COMPLETED 部署；蓝绿在绿组不健康时不切流量。部署脚本检查 PRIMARY 部署是否为新修订且 COMPLETED，否则让阶段失败。
-  2. **流水线层**：每个 Deploy 阶段配置 `OnFailure: ROLLBACK`，CodePipeline 用该阶段上一次成功执行的产物重新执行该阶段（即上一镜像 tag）。
-  3. **手工**：`scripts/rollback.sh <env> [task-def-arn]` 把服务指回指定修订。
-- **数据库迁移不可逆**：回滚到旧镜像时，如果新版本已经升级了模块 schema，旧代码的迁移检查会失败，回滚阶段会停在迁移步骤（不会用旧代码去碰新 schema）。这种情况需要人工从迁移前快照恢复（uat/prod 每次部署前自动打快照，dev/test 不打）。
+  1. **ECS 层**：滚动更新的断路器在新任务起不来或健康检查失败时回到上一个 COMPLETED 部署；蓝绿在绿组不健康时不切流量。部署脚本检查 PRIMARY 部署是否为新修订且 COMPLETED，否则让阶段失败（随后按上一条处理维护模式）。
+  2. **流水线层**：每个 Deploy 阶段配置 `OnFailure: ROLLBACK`，CodePipeline 用该阶段上一次成功执行的产物重新执行该阶段（即上一镜像 tag，同样先迁移检查再切换）。
+  3. **手工**：`scripts/rollback.sh <env> [task-def-arn]` 只把服务指回指定修订，不碰数据库。
+- **数据库迁移不可逆**：回滚到旧镜像不会撤销 schema。旧镜像的迁移检查遇到它不认识的新表/新模块时的实际行为见 `VERIFICATION.md`（沙箱实测）；schema 不兼容时应从迁移前快照恢复（uat/prod 每次部署前自动快照并保留最近 `predeploy_snapshots_keep` 个，dev/test 不打）。
 
 ## 4. MCF 履约桥接（独立站 ↔ Amazon MCF）
 
-状态机：`RECEIVED → SUBMITTED → SHIPPED → COMPLETE`，任意步骤可进入 `EXCEPTION`（需人工处理并告警）。
+状态机：`RECEIVED → SUBMITTED → SHIPPED → COMPLETE`；`CANCELLED`（店铺取消或 MCF 侧取消）；任意步骤可进入 `EXCEPTION`（需人工处理并告警）。
+
+与店铺订单状态的对应（店铺侧映射由 Magento 模块实现，未包含在本仓库）：
+
+| 店铺订单状态 | 桥接状态 / 事件 |
+|---|---|
+| 待支付 | 不进入桥接（只有 `Order Paid` 才触发）；支付前取消也可先发 `Order Cancelled`，桥接记 CANCELLED，迟到的 `Order Paid` 被忽略 |
+| 已支付 | `Order Paid` → RECEIVED |
+| 履约中 | SUBMITTED（事件 `Fulfillment Order Submitted`） |
+| 已发货 | SHIPPED（`Fulfillment Shipped`，含承运商、运单号、跟踪链接） |
+| 已完成 | COMPLETE（`Fulfillment Delivered`；首轮轮询就已签收时先补发 `Fulfillment Shipped`） |
+| 已取消 | CANCELLED（`Fulfillment Cancelled`，`source=storefront` 或 `mcf`） |
+| （异常，人工处理） | EXCEPTION（`Fulfillment Exception` → SNS 告警） |
 
 | 环节 | 实现 | SP-API 操作（官方模型字段） |
 |---|---|---|
-| SKU 映射 | DynamoDB 键 `(SKU#<店铺SKU>, MKT#<市场>) → msku`，状态 `UNVERIFIED/VALID/INVALID`；`scripts`/本地演示从 `sample-data/sku_map.json` 导入 | — |
-| 映射校验 + 库存同步 | `inventory_sync` 定时；每市场按 MSKU 分批（模型 `sellerSkus` 上限）调用，处理 `nextToken` 分页；不存在的 MSKU 标 INVALID 并告警；`fulfillableQuantity` 写回映射并发布 `Inventory Updated` 事件 | `getInventorySummaries`（`granularityType=Marketplace`、`granularityId`、`marketplaceIds`、`sellerSkus`、`details`） |
-| 下单 | `Order Paid` 事件 → SQS → `order_intake`；`sellerFulfillmentOrderId` 由店铺订单号确定性生成；映射缺失/INVALID 直接 EXCEPTION；429/5xx 由队列重投，第 N 次（默认 3）仍失败标 EXCEPTION、发告警、进入 DLQ；4xx 先查询是否已存在（防重复下单） | `createFulfillmentOrder`（必填：`sellerFulfillmentOrderId`、`displayableOrderId`、`displayableOrderDate`、`displayableOrderComment`、`shippingSpeedCategory`、`destinationAddress`、`items[sellerSku, sellerFulfillmentOrderItemId, quantity]`；可选 `fulfillmentPolicy`=FillOrKill/FillAll/FillAllAvailable、`marketplaceId`、`notificationEmails`） |
-| 物流回传 | `tracking_poller` 定时扫描 SUBMITTED/SHIPPED；`fulfillmentShipments[].fulfillmentShipmentPackage[]` 取包裹号，再取跟踪详情；有运单 → SHIPPED 并发布 `Fulfillment Shipped`（含 `customerTrackingLink`）；全部 `DELIVERED` → COMPLETE；订单状态 Cancelled/Unfulfillable/Invalid → EXCEPTION | `getFulfillmentOrder`、`getPackageTrackingDetails`（`packageNumber`） |
-| 配送等级 | 店铺 `standard/expedited/priority` → `ShippingSpeedCategory` 的 `Standard/Expedited/Priority` | — |
+| SKU 映射 | DynamoDB 键 `(SKU#<店铺SKU>, MKT#<市场>) → msku`，状态 `UNVERIFIED/VALID/INVALID`；从 `sample-data/sku_map.json` 导入 | — |
+| 映射校验 + 库存同步 | `inventory_sync` 定时；每市场用该市场所属区域的客户端，按 MSKU 分批（模型 `sellerSkus` 上限）调用，处理 `nextToken` 分页；不存在的 MSKU 标 INVALID 并告警；`fulfillableQuantity` 写回映射并发布 `Inventory Updated`（绝对数量，下一次运行覆盖） | `getInventorySummaries` |
+| 下单 | `Order Paid` → SQS → `order_intake`（默认 batch 1，超时与可见性超时按配置推导，F-31）；`sellerFulfillmentOrderId` 由店铺订单号确定性生成；映射缺失/INVALID 直接 EXCEPTION；429/5xx 由队列重投；4xx 先 `getFulfillmentOrder` 确认是否已存在（确认丢失的情况）；第 N 次（默认 3）仍失败前再确认一次，确认不了则 EXCEPTION + `mcf_check`，轮询器继续确认；消息进入 DLQ | `createFulfillmentOrder`、`getFulfillmentOrder` |
+| 重驱 | `scripts/mcf_redrive.py` 把 DLQ 消息加 `retry=true` 送回队列；只有带该标志的消息才把 EXCEPTION 订单重置为 RECEIVED | — |
+| 取消 | `Order Cancelled` → 同一队列；发货前调用取消并置 CANCELLED；已发货/已完成拒绝并发异常事件 | `cancelFulfillmentOrder`（F-29） |
+| 物流回传 | `tracking_poller` 定时：先补发 outbox 中的事件，再确认 `mcf_check` 订单、清扫卡在 RECEIVED 的订单（超过所有重投时间 → EXCEPTION），最后逐单跟踪 SUBMITTED/SHIPPED；每张订单独立处理，单张失败只计数 | `getFulfillmentOrder`、`getPackageTrackingDetails` |
+| 配送等级 | 店铺 `standard/expedited/priority` → `Standard/Expedited/Priority` | — |
 
-SP-API 调用层：`MockSpApiClient`（默认，状态存 DynamoDB，可跨 Lambda 冷启动；收件人名 `FAIL_TRANSIENT/FAIL_ALWAYS/INVALID_ADDRESS` 触发故障）与 `LiveSpApiClient`（LWA refresh token 换访问令牌，`x-amz-access-token` 头；**未对真实账户运行**）。live 模式要求 `spapi_mode=live` 且 Secret 不含占位值，否则 Lambda 拒绝启动。
+可靠性：状态变化与它产生的事件在同一次条件写入里落库（乐观锁 `version`，事务性 outbox），EventBridge 接受后才从 outbox 移除；发布失败时状态照常推进、事件留在 outbox，由轮询器或下一次投递补发。投递语义是至少一次，事件带 `eventId`（`<订单号>:<序号>`）供消费者去重。
+
+SP-API 调用层：`MockSpApiClient`（默认，状态存 DynamoDB，可跨 Lambda 冷启动；收件人名 `FAIL_TRANSIENT`、`FAIL_FIRST_<n>`、`FAIL_ALWAYS`、`INVALID_ADDRESS`、`LOST_ACK` 触发故障）与 `LiveSpApiClient`（LWA refresh token 换访问令牌，`x-amz-access-token` 头；**未对真实账户运行**）。每个 SP-API 区域一个客户端；live 模式要求 `spapi_mode=live` 且 Secret 中每个区域的 refresh token 都不是占位值，否则 Lambda 拒绝启动。
 
 ## 5. 设计取舍
 
-- ECS 部署由 VPC 内 CodeBuild 脚本完成，而不是 CodePipeline 的 ECS 动作：换取严格的「迁移 → 切换 → 刷缓存」顺序，代价是部署逻辑在脚本里，需要自己测试（见 `tests/test_config_and_keypoints.py`）。
-- CDK 与流水线共同管理任务定义：流水线注册新修订并更新服务；重新 `cdk deploy` 平台栈时需带 `-c imageTag=<当前 SHA>`，否则 CDK 会把任务定义镜像与 desiredCount 改回初始值（desiredCount=0）。
-- 单表 DynamoDB + 一个 GSI，换取更少的资源与 IAM 授权；查询按状态与市场。
+- ECS 部署由 VPC 内 CodeBuild 脚本完成，而不是 CodePipeline 的 ECS 动作：换取严格的「迁移 → 切换 → 刷缓存/关维护」顺序，代价是部署逻辑在脚本里，需要自己测试（`tests/test_config_and_keypoints.py`）。ECS 原生蓝绿的生命周期钩子（A13）是 Lambda，适合切流前验证，不适合运行一次性迁移任务。
+- CDK 与流水线共同管理任务定义：流水线注册新修订并更新服务；重新 `cdk deploy` 平台栈时需按环境带 `-c imageTags=<env>=<当前 tag>`（当前 tag 在 SSM `<ssm_prefix>/<env>/current_image_tag`），否则该环境回到初始状态（desiredCount=0）。
+- TLS 在 ALB 终止，ALB → 任务为 VPC 内 HTTP（SECURITY-NOTES「传输加密例外」）。
+- 单表 DynamoDB + 两个 GSI（状态/映射；稀疏 outbox 索引），换取更少的资源与 IAM 授权。
 - 沙箱只部署 dev；四环境差异用参数表达并由 CDK assertions 覆盖。
 
 ## 6. 局限
 
-- Magento 店铺侧模块（发布 `Order Paid`、消费发货/库存事件、发货邮件）未实现，只定义了事件契约（Q-05）。
-- 未做性能测试、容量规划与成本评估；`config/*.json` 中的实例规格是占位值。
-- 沙箱只验证了「空库安装」与「无 schema 变更的再部署」两条迁移分支；「需要 `setup:upgrade` + 维护模式」的分支只有脚本与守护测试，未在 AWS 上触发过。
-- 账号级注册表若使用增强扫描，首次扫描可能长时间不出结果；沙箱中没有拿到任何漏洞结果（`VERIFICATION.md` §2）。
+- Magento 店铺侧模块（发布 `Order Paid`/`Order Cancelled`、消费发货/库存/取消事件、缺货上下架、发货邮件）未实现，只定义了事件契约（Q-05）；履约闭环在店铺一侧只到事件为止。
+- 未做性能测试、容量规划与成本评估；交付配置的实例类留空待填。
+- https 环境（uat/prod）未在 AWS 上部署过，只由 CDK assertions 覆盖；指向内部 ALB 的私有 DNS 记录不在栈内创建（Q-16）。
+- 账号级注册表若使用增强扫描，首次扫描可能长时间不出结果；沙箱中能否拿到结果见 `VERIFICATION.md`。
 - 媒体与 `var/` 放 EFS；未做 CDN、跨区域与对象存储媒体方案（Q-09）。
 - Cron（`bin/magento cron:run`）、消息队列消费者未部署；生产需要单独的定时任务/服务。
-- 后台管理入口、TLS 证书、WAF 未配置（ALB 仅内部 HTTP）。
+- 后台管理入口、WAF 未配置。
 
-## 7. 事实核对（核实日期 2026-10-20）
+## 7. 事实核对（核实日期 2026-10-20，F-25 起为 2026-10-21）
 
 | # | 说法 | 官方来源 |
 |---|---|---|
@@ -129,5 +149,12 @@ SP-API 调用层：`MockSpApiClient`（默认，状态存 DynamoDB，可跨 Lamb
 | F-22 | RDS 全局证书包 `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html |
 | F-23 | Docker 官方 `php`、`composer` 镜像提供 arm64v8；ECR Public 上 `docker/library/php:8.3-fpm-bookworm` 的清单含 arm64（registry API 查询） | https://hub.docker.com/_/php ，https://gallery.ecr.aws/docker/library/php |
 | F-24 | Amazon MCF 集成目录未列出 Adobe Commerce/Magento 应用 | https://supplychain.amazon.com/integrations |
+| F-25 | 任务定义 `initProcessEnabled`：在容器内运行转发信号、回收进程的 init 进程（对应 `docker run --init`）；`stopTimeout` 默认 30 秒、Fargate 上最大 120 秒 | https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html |
+| F-26 | StopTask 先发停止信号（默认 SIGTERM），超时（默认 30 秒）后发 SIGKILL | https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html |
+| F-27 | ACM 证书是区域资源，要在使用它的负载均衡器所在区域申请或导入；ALB HTTPS 监听推荐使用 ACM 证书 | https://docs.aws.amazon.com/acm/latest/userguide/acm-overview.html ，https://docs.aws.amazon.com/elasticloadbalancing/latest/application/https-listener-certificates.html |
+| F-28 | ELB 推荐的安全策略为 `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09`；通过 CLI/CloudFormation/CDK 创建监听器时若不指定，默认是 `ELBSecurityPolicy-2016-08` | https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html |
+| F-29 | Fulfillment Outbound 2020-07-01：`cancelFulfillmentOrder` 为 `PUT /fba/outbound/2020-07-01/fulfillmentOrders/{sellerFulfillmentOrderId}/cancel`；`FulfillmentOrderStatus` 枚举含 New、Received、Planning、Processing、Cancelled、Complete、CompletePartialled、Unfulfillable、Invalid | https://github.com/amzn/selling-partner-api-models/blob/main/models/fulfillment-outbound-api-model/fulfillmentOutbound_2020-07-01.json |
+| F-30 | SP-API EU 端点覆盖德国（`A1PA6795UKMFR9`），FE 端点覆盖日本（`A1VC38T7YXB528`） | https://developer-docs.amazon.com/sp-api/docs/sp-api-endpoints ，https://developer-docs.amazon.com/sp-api/docs/marketplace-ids |
+| F-31 | SQS 事件源：队列可见性超时至少设为函数超时的 6 倍；函数超时不得超过可见性超时 | https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-configure.html |
 
-已核实不了、因而从仓库中删除或未写入的说法：SP-API 是否仍要求 SigV4 签名（改为 OPEN-QUESTIONS Q-13）；Aurora MySQL 是否提供 MySQL 8.4 兼容版本（改用 RDS for MySQL，D-06）；部署断路器能否与 ECS 原生蓝绿同时使用（未使用）。
+已核实不了、因而从仓库中删除或未写入的说法：「SP-API 已正式取消 SigV4」这类公告式说法（只依据 F-18 页面的调用步骤，见 OPEN-QUESTIONS 已关闭的 Q-13）；Aurora MySQL 是否提供 MySQL 8.4 兼容版本（改用 RDS for MySQL，D-06）；部署断路器能否与 ECS 原生蓝绿同时使用（未使用）。

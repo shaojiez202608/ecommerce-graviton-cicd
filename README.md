@@ -23,22 +23,29 @@ See [docs/prior-art.md](docs/prior-art.md). In short, this prototype focuses on:
 2. **All-Graviton stack** with a per-dependency arm64 checklist
    ([docs/graviton-compatibility.md](docs/graviton-compatibility.md)): ECS on Fargate ARM64,
    CodeBuild ARM, RDS for MySQL 8.4, ElastiCache for Valkey, OpenSearch Service, Lambda arm64.
-3. **Storefront ↔ MCF glue**: SKU ↔ MSKU mapping and validation, inventory sync events,
-   idempotent `createFulfillmentOrder` with retry-then-alert, tracking write-back events. The
+3. **Storefront ↔ MCF bridge (one half of the loop)**: SKU ↔ MSKU mapping and validation,
+   inventory sync events per marketplace/SP-API region, idempotent `createFulfillmentOrder` with
+   retry-then-alert and explicit DLQ redrive, cancellation before shipment, tracking write-back
+   events, and a transactional outbox so a failed event publish never loses a state change. The
    SP-API layer defaults to a **mock**; no real seller account or credentials are involved.
+   **The storefront side is not implemented**: the Magento module that publishes `Order Paid` /
+   `Order Cancelled`, consumes shipment/inventory events, takes items out of stock and sends
+   shipping e-mails is only specified as an event contract.
 
 It does not re-implement Magento features (cart, checkout, payments) or the SP-API operation
-samples that Amazon already publishes.
+samples that Amazon already publishes. Generic blue/green with pre-traffic checks already exists
+in AWS samples (see prior-art A12/A13); the difference here is the Magento release order around it.
 
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) (diagram, trade-offs, limitations, fact check).
 
 ```
-proto-ecom-cicd            ECR, S3 source/artifact buckets, arm64 image build, pipelines, approvals
-proto-ecom-<env>-platform  VPC, internal ALB, ECS Fargate ARM64, RDS MySQL, Valkey, OpenSearch, EFS,
-                         alarms, in-VPC deploy project
-proto-ecom-<env>-mcf       EventBridge bus, SQS + DLQ, DynamoDB, 3 arm64 Lambda functions, alarms
+<project>-cicd            ECR, S3 source/artifact buckets, arm64 image build, pipelines, approvals
+<project>-<env>-platform  VPC, internal ALB (http, or https:443 with an ACM certificate), ECS Fargate
+                          ARM64, RDS MySQL, Valkey, OpenSearch, EFS, alarms, in-VPC deploy project
+<project>-<env>-mcf       EventBridge bus, SQS + DLQ, DynamoDB, 3 arm64 Lambda functions, alarms
+(<project> comes from the profile; default proto-ecom)
 ```
 
 ## Quick start

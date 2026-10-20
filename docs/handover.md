@@ -4,8 +4,8 @@
 
 ## 1. 交付了什么
 
-- `infra/`：CDK（Python）应用，三类栈：`proto-ecom-cicd`、`proto-ecom-<env>-platform`、`proto-ecom-<env>-mcf`。参数集中在 `config/*.json`。
-- `app/magento/`：不可变 Magento 镜像（arm64）的 Dockerfile 与运行时脚本（env.php 渲染、迁移、缓存刷新）。`app/smoke/`：用于验证流程的替身镜像。
+- `infra/`：CDK（Python）应用，三类栈：`<project>-cicd`、`<project>-<env>-platform`、`<project>-<env>-mcf`（`<project>` 默认 `proto-ecom`）。参数集中在 `config/*.json`。
+- `app/magento/`：不可变 Magento 镜像（arm64）的 Dockerfile、提交到 Git 的 `config/config.php`、项目模块（含演示模块 `Proto_DeployDemo`，真实项目删除该目录与 config.php 中的一行）与运行时脚本（env.php 渲染、迁移、维护模式、缓存刷新）。`app/smoke/`：用于验证流程的替身镜像。
 - `buildspec/build.yml`、`scripts/deploy/*.sh`：一次构建、逐环境晋级的构建与部署逻辑。
 - `src/mcf/`：独立站 ↔ MCF 履约桥接（Lambda arm64），SP-API 调用层含 mock。
 - `tests/`：单元测试与 CDK assertions。`local/`：本地 mock 演示。
@@ -19,6 +19,10 @@
 | 备份 | RDS 备份保留期最短、EFS 不开自动备份 | RDS 备份保留期更长、EFS 自动备份、Valkey 快照保留 |
 | 扫描门禁 | 阻断 CRITICAL | 阻断 CRITICAL + HIGH |
 | 镜像 | smoke 替身 | magento |
+| 实例类 | 沙箱可部署值 | **留空，必须填写**（加载时校验） |
+| 入口 | dev http | dev/test http；uat/prod **https**（必须提供证书 ARN 与主机名） |
+| 发布失败时的维护模式 | disable | dev/test disable；uat/prod **keep** |
+| 迁移前快照 | 无 | uat/prod，保留最近 3 个 |
 | 环境/流水线 | dev / develop | dev/test/uat/prod；develop、release（两道审批） |
 
 修改删除策略只需改 `removal_policy`；切换后重新 `cdk deploy`。
@@ -28,11 +32,14 @@
 - 发版：提交代码 → `scripts/package_source.sh develop|release`（或改用 CodeConnections 源，见 §5）。
 - 审批：`release` 流水线在 uat、prod 前停在审批动作，SNS 主题 `proto-ecom-approvals` 通知审批人；七天未处理视为失败。
 - 回滚：见 `docs/architecture.md` §3。数据库迁移不可逆，uat/prod 每次部署前自动快照。
-- 重新 `cdk deploy` 平台栈时带 `-c imageTag=<当前 SHA>`。
+- 重新 `cdk deploy` 平台栈时按环境带 `-c imageTags=<env>=<tag>`，当前 tag 在 SSM `<ssm_prefix>/<env>/current_image_tag`（部署脚本成功后写入）。
+- 发布失败且维护模式被保留（`keep`）：确认原因后从迁移前快照恢复或重新发布；人工关闭用 ops 任务执行 `magento-maintenance disable`。
+- MCF：EXCEPTION 订单修复原因后用 `scripts/mcf_redrive.py` 从 DLQ 重驱（自动带 `retry=true`）；店铺侧取消发 `Order Cancelled` 事件。消费者按事件里的 `eventId` 去重（至少一次投递）。
+- 增删 Magento 模块后用 `scripts/export_magento_config.sh` 重新生成并提交 `config.php`。
 
 ## 4. 上生产前需要加固的清单
 
-1. **入口**：增加公网入口时使用 CloudFront + AWS WAF + ACM 证书 + HTTPS 监听；ALB 仍放私有子网；后台路径限制来源或接入身份认证；更新 `THREAT_MODEL.md`。
+1. **入口**：增加公网入口时使用 CloudFront + AWS WAF；内部 ALB 已支持 HTTPS（需证书与私有 DNS 记录）；需要时把 ALB → 任务也改为 TLS（当前为 VPC 内 HTTP）；后台路径限制来源或接入身份认证；更新 `THREAT_MODEL.md`。
 2. **账号隔离**：生产独立账号（AWS Organizations），流水线跨账号部署；部署角色按账号最小权限。
 3. **密钥**：DB/OpenSearch/Valkey 凭证开启轮换并协调任务重启；crypt key 不轮换但纳入备份与访问审计；考虑客户管理 KMS 密钥（RDS、EFS、S3、CodeBuild、SNS、SQS、DynamoDB、日志组）。
 4. **高可用**：prod 的 RDS Multi-AZ、Valkey 多节点自动故障转移、OpenSearch 多 AZ + 专用主节点、多个 NAT、Web 任务数与自动扩缩容。
@@ -43,7 +50,8 @@
 9. **MCF**：接真实账户前在 SP-API 沙箱验证；确认签名要求（Q-13）；按官方限流说明实现令牌桶/退避；LWA 凭证轮换流程；店铺侧消费者（发货邮件、上下架）实现与幂等。
 10. **合规**：支付卡数据不进入本系统（使用托管支付页/令牌化）；评估 PCI DSS 范围；OSL-3.0 下分发镜像的义务评估（Q-12）。
 11. **IAM**：复核 `SECURITY-NOTES.md` 中每一条 cdk-nag 确认项；部署角色加权限边界。
-12. **CDK 管理边界**：把镜像 tag 写回 SSM 并由 CDK 读取，或让 CDK 不再管理任务定义镜像，避免重复部署时漂移。
+12. **CDK 管理边界**：部署脚本已把当前 tag 写入 SSM；可进一步让 CDK 部署时自动读取，或让 CDK 不再管理任务定义镜像，避免重复部署时漂移。
+13. **发布策略**：评估 uat/prod 的 `maintenance_on_failure` 与快照恢复演练；为 schema 变更设计向后兼容的两步发布（先加后删），减少维护窗口。
 
 ## 5. 常见替换点
 

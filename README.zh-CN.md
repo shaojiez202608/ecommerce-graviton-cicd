@@ -12,9 +12,21 @@
 
 1. **把 Magento 特有步骤放进「一次构建、逐环境晋级」的流水线**：不可变镜像（构建时完成 composer、`setup:di:compile`、`setup:static-content:deploy`）、运行时从 Secrets Manager/SSM 渲染 `env.php`、每环境单点串行的迁移任务 + 维护模式、服务稳定后 `cache:flush`。两条流水线（`develop` → dev；`release` → test → 审批 → uat 蓝绿 → 审批 → prod 蓝绿），阶段回滚 + ECS 层回滚。
 2. **全栈 Graviton**，逐依赖给出 arm64 依据（[docs/graviton-compatibility.md](docs/graviton-compatibility.md)）：ECS Fargate ARM64、CodeBuild ARM、RDS for MySQL 8.4、ElastiCache for Valkey、OpenSearch Service、Lambda arm64。
-3. **独立站 ↔ MCF 粘合层**：SKU↔MSKU 映射与校验、库存同步事件、幂等的 `createFulfillmentOrder` + 重试后告警、物流回传事件。SP-API 调用层默认 **mock**，不接真实卖家账户、不含任何凭证。
+3. **独立站 ↔ MCF 履约桥接（闭环的一半）**：SKU↔MSKU 映射与校验、按市场/SP-API 区域的库存同步事件、幂等的 `createFulfillmentOrder` + 重试后告警 + 显式 DLQ 重驱、发货前取消、物流回传事件，以及事务性 outbox（事件发布失败不会丢失状态变化）。SP-API 调用层默认 **mock**，不接真实卖家账户、不含任何凭证。**店铺侧未实现**：发布 `Order Paid`/`Order Cancelled`、消费发货/库存事件、缺货下架、发货邮件的 Magento 模块只定义了事件契约。
 
-不重复实现 Magento 自带功能（购物车、结算、支付），也不重复 Amazon 已发布的 SP-API 操作示例。
+不重复实现 Magento 自带功能（购物车、结算、支付），也不重复 Amazon 已发布的 SP-API 操作示例。通用的蓝绿与切流前检查已有 AWS 样例（prior-art A12/A13），这里的差异是围绕它的 Magento 发布顺序。
+
+## 架构
+
+见 [docs/architecture.md](docs/architecture.md)（架构图、设计取舍、局限、事实核对）。
+
+```
+<project>-cicd            ECR、S3 源/产物桶、arm64 镜像构建、流水线、审批
+<project>-<env>-platform  VPC、内部 ALB（http，或带 ACM 证书的 https:443）、ECS Fargate ARM64、
+                          RDS MySQL、Valkey、OpenSearch、EFS、告警、VPC 内部署项目
+<project>-<env>-mcf       EventBridge 总线、SQS + DLQ、DynamoDB、3 个 arm64 Lambda、告警
+（<project> 来自配置文件，默认 proto-ecom）
+```
 
 ## 快速开始
 
@@ -29,6 +41,18 @@ scripts/package_source.sh develop               # 用已提交的代码触发流
 ```
 
 参数集中在一个文件（`config/sandbox.json` 或 `config/customer.json`）。文档：[架构](docs/architecture.md) · [部署](docs/deployment-guide.md) · [演示](docs/demo-script.md) · [交接](docs/handover.md) · [清理](docs/cleanup.md)。
+
+## 目录结构
+
+| 路径 | 内容 |
+|---|---|
+| `infra/` | CDK 应用（Python）与各栈 |
+| `config/` | 参数文件（沙箱 / 交付） |
+| `app/magento/` | 不可变 Magento 镜像（arm64）、提交到 Git 的 config.php、项目模块与运行时脚本 |
+| `app/smoke/` | 用于验证流水线的轻量替身镜像 |
+| `buildspec/`、`scripts/deploy/` | 构建与晋级逻辑 |
+| `src/mcf/` | MCF 履约桥接（Lambda），含 mock 与 live SP-API 客户端 |
+| `tests/`、`local/`、`sample-data/` | 测试、本地演示、合成数据 |
 
 ## 上生产前需要加固的清单
 

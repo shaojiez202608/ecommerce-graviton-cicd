@@ -8,7 +8,7 @@
 
 ## 信任边界
 
-1. 独立站 → EventBridge 总线（`Order Paid` 事件）。
+1. 独立站 → EventBridge 总线（`Order Paid`、`Order Cancelled` 事件）。
 2. MCF 桥接 → SP-API（外部 HTTPS）。
 3. 源码/依赖（GitHub、Packagist、公共镜像）→ CodeBuild → ECR。
 4. CodePipeline → 各环境 VPC 内部署项目 → ECS。
@@ -25,3 +25,6 @@
 | 越权（E） | 部署项目被滥用以运行任意任务 | RunTask 限定到本环境 ops 任务族与集群；PassRole 限定到本环境任务角色 | RegisterTaskDefinition 无法资源级限制 |
 | 供应链 | 依赖或基础镜像被投毒 | 基础镜像来自 ECR Public 的 Docker 官方镜像镜像；ECR 扫描门禁；镜像 tag 不可变；同一 SHA 只构建一次 | 未锁定镜像 digest 与 Composer 依赖哈希之外的校验；生产需私有依赖源 |
 | 重复发货 | 事件重复投递或确认丢失 | `sellerFulfillmentOrderId` 确定性生成；DynamoDB 条件写入；4xx 时查询是否已存在 | 依赖 MCF 侧对重复 ID 的处理（以官方行为为准） |
+| 伪造取消 | 非店铺来源发送 `Order Cancelled`，取消真实订单 | 与 `Order Paid` 同一总线与规则（只匹配 `source=storefront.orders`，无开放资源策略）；发货后拒绝取消 | 同「伪造」行；生产需事件签名或对账 |
+| 事件丢失/重复 | EventBridge 暂时不可用、Lambda 中途失败 | 事务性 outbox（状态与待发事件同一次条件写入），轮询补发；事件带 `eventId` | 至少一次投递，消费者必须去重 |
+| 绕过审批 | 运维脚本把未审批的镜像推到 uat/prod | `promote_image.sh` 对有审批的环境默认拒绝，`--break-glass` 需理由并记录；部署前复查扫描结果 | 仍依赖调用者的 IAM 权限；生产应限制谁能启动部署项目 |
