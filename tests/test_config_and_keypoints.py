@@ -76,5 +76,16 @@ def test_key_point_4_cache_flush_after_service_stable():
 def test_build_tags_image_with_commit_sha_and_scan_gate():
     spec = (ROOT / "buildspec" / "build.yml").read_text()
     assert re.search(r'IMAGE_TAG="\$\{REVISION', spec)
-    assert "image-scan-complete" in spec and "scan gate failed" in spec
+    assert "scan_gate.py" in spec
     assert "--platform linux/arm64" in spec
+
+
+def test_scan_gate_counts_basic_and_enhanced():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("scan_gate", ROOT / "scripts" / "build" / "scan_gate.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.severity_counts({"imageScanFindings": {"findingSeverityCounts": {"HIGH": 2}}}) == {"HIGH": 2}
+    enhanced = {"imageScanFindings": {"enhancedFindings": [{"severity": "CRITICAL"}, {"severity": "LOW"}]}}
+    assert mod.severity_counts(enhanced) == {"CRITICAL": 1, "LOW": 1}

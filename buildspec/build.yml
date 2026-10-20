@@ -41,19 +41,9 @@ phases:
   post_build:
     commands:
       - set -euo pipefail
-      # Scan gate: ECR scan-on-push must finish and report no findings at the blocked severities.
-      - aws ecr wait image-scan-complete --repository-name "$IMAGE_REPO_NAME" --image-id imageTag="$IMAGE_TAG"
-      - aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPO_NAME" --image-id imageTag="$IMAGE_TAG" --query 'imageScanFindings.findingSeverityCounts' --output json > scan-counts.json
+      # Scan gate: wait for the ECR scan (basic or enhanced) and block on configured severities.
+      - python3 scripts/build/scan_gate.py "$IMAGE_REPO_NAME" "$IMAGE_TAG" "$BLOCK_SEVERITIES" "${SCAN_TIMEOUT_SECONDS:-900}"
       - cat scan-counts.json
-      - |
-        python3 - <<'PY'
-        import json, os, sys
-        counts = json.load(open("scan-counts.json")) or {}
-        blocked = [s for s in os.environ["BLOCK_SEVERITIES"].split(",") if s and counts.get(s, 0) > 0]
-        if blocked:
-            sys.exit(f"scan gate failed: findings at {blocked}: {counts}")
-        print("scan gate passed", counts)
-        PY
       - printf '{"imageUri":"%s","imageTag":"%s","revision":"%s","variant":"%s"}\n' "$IMAGE_URI" "$IMAGE_TAG" "$REVISION" "$IMAGE_VARIANT" > imageDetail.json
       - mkdir -p deploy && cp scripts/deploy/*.sh deploy/
 artifacts:

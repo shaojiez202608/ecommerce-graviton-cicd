@@ -86,6 +86,11 @@ class CicdStack(Stack):
             actions=["ecr:DescribeImages", "ecr:DescribeImageScanFindings"],
             resources=[self.repo.repository_arn],
         ))
+        # Scan results when the registry uses enhanced scanning (Amazon Inspector).
+        self.build_project.add_to_role_policy(iam.PolicyStatement(
+            actions=["inspector2:ListCoverage", "inspector2:ListFindings"],
+            resources=["*"],  # Inspector list actions do not support resource-level permissions
+        ))
         # Authenticated pulls from the ECR Public mirror of Docker Official Images.
         self.build_project.add_to_role_policy(iam.PolicyStatement(
             actions=["ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"],

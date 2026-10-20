@@ -33,7 +33,7 @@ BY_KIND: dict[str, dict[str, str]] = {
         **CDK_S3_GRANTS,
         "IAM5[Resource::<ArtifactBucket7410C9EF.Arn>/*]": "Pipeline and CodeBuild need object access inside "
         "the pipeline artifact bucket only.",
-        "IAM5[Resource::*]": "ecr:GetAuthorizationToken, ecr-public:GetAuthorizationToken and "
+        "IAM5[Resource::*]": "ecr:GetAuthorizationToken, ecr-public:GetAuthorizationToken, inspector2:List* and "
         "sts:GetServiceBearerToken do not support resource-level permissions; CDK S3 notification handler "
         "needs s3:PutBucketNotification on the bucket it manages.",
         "IAM5[Resource::arn:<AWS::Partition>:logs:{region}:<AWS::AccountId>:log-group:/aws/codebuild/<ImageBuild30B7C98D>:*]":
