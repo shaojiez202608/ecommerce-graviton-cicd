@@ -2,7 +2,7 @@
 /**
  * Small helper for the immutable-image flow.
  *   merge-config <overlay.php> <config.php>  merge scopes/themes into config.php (build time)
- *   write-stub   <env.php>                   write a DB-less env.php for di:compile/SCD (build time)
+ *   write-stub   <env.php> [nodb]            write a placeholder env.php for di:compile/SCD (build time)
  *   render       <env.php>                   write the real env.php from environment variables (run time)
  * Runtime values come from ECS task secrets (AWS Secrets Manager) and SSM parameters
  * injected as environment variables (Magento key point 2). No value is baked into the image.
@@ -40,14 +40,22 @@ switch ($command) {
         break;
 
     case 'write-stub':
-        file_put_contents($a, export_php([
+        // Build-time env.php. With $b === 'nodb' the 'db' section is omitted, so static content
+        // deploy cannot fall back to the database for theme/scope data and must use config.php.
+        $stub = [
             'MAGE_MODE' => 'production',
             'install' => ['date' => 'Thu, 01 Jan 2026 00:00:00 +0000'],
             'crypt' => ['key' => 'build-time-placeholder-not-used-at-runtime'],
-            // No 'db' section on purpose: without it DeploymentConfig::isDbAvailable() is false and
-            // theme/scope data is read from config.php instead of the database.
             'backend' => ['frontName' => 'admin'],
-        ]));
+        ];
+        if ($b !== 'nodb') {
+            $stub['db'] = ['table_prefix' => '', 'connection' => ['default' => [
+                'host' => 'build-placeholder', 'dbname' => 'none', 'username' => 'none', 'password' => '',
+                'model' => 'mysql4', 'engine' => 'innodb', 'initStatements' => 'SET NAMES utf8;', 'active' => '1',
+            ]]];
+            $stub['resource'] = ['default_setup' => ['connection' => 'default']];
+        }
+        file_put_contents($a, export_php($stub));
         break;
 
     case 'render':
