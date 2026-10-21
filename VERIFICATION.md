@@ -5,10 +5,10 @@
 - 日期：2026-10-20（UTC，AWS 部分 16:20–19:xx）/ 2026-10-21（本地检查）
 - 区域：us-east-1（只用了这一个区域）
 - 配置：`config/sandbox.json`（与 `config/sandbox.example.json` 相同：dev 环境 + `develop` 流水线 + MCF mock，US/na 与 DE/eu 两个市场，`removal_policy=destroy`）
-- **最终验证提交：`4754d6d`**（`4754d6dbc6c0a18c4231835dfcd7134fa77de442`）。它与 `5f53935` 只差销毁/残留核对脚本中枚举任务定义族的修复；之后的提交只改文档（本文件、DEPLOYMENT-LOG、review 表等），tag `v0.1.0` 打在最后一个文档提交上。
+- **最终验证提交：`2e8d9c3`**（`2e8d9c3772de92f150245992b90ed68671d16eef`）。它与 `a03dc80` 只差销毁/残留核对脚本中枚举任务定义族的修复；之后的提交只改文档（本文件、DEPLOYMENT-LOG、review 表等），tag `v0.1.0` 打在最后一个文档提交上。
 - 账号：员工沙箱账号（`111122223333` 为占位，不记录真实 ID）
 
-## 1. 本地检查（最终提交 `4754d6d`，不需要 AWS）
+## 1. 本地检查（最终提交 `2e8d9c3`，不需要 AWS）
 
 | 命令 | 结果 | 不能证明什么 |
 |---|---|---|
@@ -18,7 +18,7 @@
 | `make scan`（gitleaks 8.30.1 全历史 + 运行时生成的假 AWS key canary） | 全历史 0 leaks；canary 被 `aws-access-token` 规则检出（证明扫描器能报错） | canary 只证明 AWS key 规则生效 |
 | `uvx zizmor --persona auditor .github/workflows` | 无发现 | workflow **未在 GitHub 上运行**，仅本地静态检查 |
 | `uvx pip-audit -r <uv export>`（107 个依赖） | No known vulnerabilities found | osv-scanner 未安装，未运行 |
-| ASH 3.7.1 `--mode local`（`c4ca7db` 与文档提交 `91385ca` 各跑一次，源为 `git archive HEAD` 干净副本，输出 `_scan_out/ecommerce_cicd/`，无 zip） | bandit PASSED（280 LOW：测试断言、`REPLACE_ME` 占位串、`subprocess` 调 AWS CLI）；checkov PASSED（2 条带理由的行内跳过）；detect-secrets PASSED；semgrep PASSED；npm-audit PASSED；**cdk-nag、cfn-nag、grype、opengrep、syft：MISSING（未运行：本机无 Docker / 未安装）** | 按规范，扫描器没跑完即视为**未通过**；缺的扫描器交给 CI 补跑。首轮 ASH 有 6 条可处理发现，已在 `922cc6f` 修复（uv 依赖冷却期、Docker 健康检查/基础镜像说明、workflow 输入、误报标注） |
+| ASH 3.7.1 `--mode local`（`d663a36` 与文档提交 `e7cdaf1` 各跑一次，源为 `git archive HEAD` 干净副本，输出 `_scan_out/ecommerce_cicd/`，无 zip） | bandit PASSED（280 LOW：测试断言、`REPLACE_ME` 占位串、`subprocess` 调 AWS CLI）；checkov PASSED（2 条带理由的行内跳过）；detect-secrets PASSED；semgrep PASSED；npm-audit PASSED；**cdk-nag、cfn-nag、grype、opengrep、syft：MISSING（未运行：本机无 Docker / 未安装）** | 按规范，扫描器没跑完即视为**未通过**；缺的扫描器交给 CI 补跑。首轮 ASH 有 6 条可处理发现，已在 `53be509` 修复（uv 依赖冷却期、Docker 健康检查/基础镜像说明、workflow 输入、误报标注） |
 | Holmes | **未运行**：本机没有 Holmes | — |
 | `uv run python -m local.run_mcf_demo` | 跑通：outbox（101 在 EventBridge 不可用时仍推进到 SUBMITTED，事件下一轮补发）、102 两次 503 后成功、103 三次后 EXCEPTION、104 未映射 SKU、105 走 EU 客户端、106 确认丢失后以「已存在」恢复、107 带 `retry=true` 重驱成功、108 发货前取消 | mock 行为由合成收件人名驱动，不代表真实 SP-API 的返回 |
 
@@ -35,35 +35,35 @@
 | 16:20–16:38 | 历史改写前的 `e6c1834` 对应代码 | `cdk deploy --all`（3 栈 CREATE） | 成功，约 18 分钟 | — | — |
 | 16:41–16:49 | 工作区 | `scripts/export_magento_config.sh`（arm64 CodeBuild 上运行 config-export 目标） | 成功，生成 221 个模块的 `config.php`（提交于 `3111335`） | — | — |
 | 16:36–17:05 | 同上 | `scripts/mcf_e2e.py --outbox-drill`（mock） | 演练 PASS；8 张订单全部落定（见 §2.3） | 无 | 见 §2.3 |
-| 16:45–16:58 | `600c6ee` | 流水线 develop（smoke 镜像） | 成功：Build（`arch=aarch64`）→ Deploy-dev：部署前扫描复查（ENHANCED 无结果 → `warn` 继续）→ 迁移 → 滚动 COMPLETED → cache-flush → 冒烟 200/200 | — | smoke 镜像不是 Magento |
-| 16:59–17:02 | `3111335` | Magento 镜像构建 | **失败**：`check-modules` 以静态方式调用实例方法 | 修复于 `5f02870` | — |
-| 17:11–17:20 | `5f02870` | Magento 镜像构建 | 成功：`config.php lists all 222 modules`，di:compile 与静态资源在 arm64 上完成 | — | — |
-| 17:21–17:31 | `5f02870`（脚本同工作区） | `promote_image.sh dev`：首次安装 | 成功：`migration lock acquired`（MySQL `GET_LOCK`）→ `setup:install`（含演示模块 v1 表）→ `web:3` COMPLETED → cache-flush → 冒烟 `/health_check.php` 200、`/`（Magento 首页）200 | — | 首页 200 只说明能渲染，不是功能测试 |
+| 16:45–16:58 | `a58d2fa` | 流水线 develop（smoke 镜像） | 成功：Build（`arch=aarch64`）→ Deploy-dev：部署前扫描复查（ENHANCED 无结果 → `warn` 继续）→ 迁移 → 滚动 COMPLETED → cache-flush → 冒烟 200/200 | — | smoke 镜像不是 Magento |
+| 16:59–17:02 | `3111335` | Magento 镜像构建 | **失败**：`check-modules` 以静态方式调用实例方法 | 修复于 `158d7cc` | — |
+| 17:11–17:20 | `158d7cc` | Magento 镜像构建 | 成功：`config.php lists all 222 modules`，di:compile 与静态资源在 arm64 上完成 | — | — |
+| 17:21–17:31 | `158d7cc`（脚本同工作区） | `promote_image.sh dev`：首次安装 | 成功：`migration lock acquired`（MySQL `GET_LOCK`）→ `setup:install`（含演示模块 v1 表）→ `web:3` COMPLETED → cache-flush → 冒烟 `/health_check.php` 200、`/`（Magento 首页）200 | — | 首页 200 只说明能渲染，不是功能测试 |
 | 16:5x | 控制项代码已提交、尚未部署 | `verify_controls.py` | 3 项 FAIL（Secret 可读、信任策略无条件），3 项 PASS（部署角色范围） | 预期的失败：证明检查脚本能报出缺失的控制 | — |
-| 17:35–17:46 | `c71dbf7` → `bb1382d` → `015490a` | `make preflight` | 首次 FAIL（配额检查把已存在的 VPC 算作新增；EIP 实际用量高于 Service Quotas 返回值）→ 修复；第二次 `make deploy` 时 preflight 因另一个 CDK 进程占用 `cdk.out` 失败 → 修复为独立输出目录；之后 PASS（无删除/替换） | 2 个 preflight 缺陷，已修复 | — |
-| 17:44–17:48 | `015490a` | `make deploy`（更新：信任策略条件、Secret 资源策略、Lambda 代码） | 成功 | — | — |
-| 17:48 | `015490a` | `verify_controls.py` | 6/6 PASS：运维身份读 SP-API Secret 与 DB 主用户 Secret 均 `AccessDeniedException`；部署角色可对本环境 ops 族 RunTask、不能对其他族 RunTask、不能 PassRole 无关角色（IAM 策略模拟）；部署角色信任策略含 SourceAccount + SourceArn | — | IAM 策略模拟不等于真实调用；没有尝试用其他账号扮演角色 |
-| 17:48–17:50 | `015490a` | 流水线 develop | **Build 失败（预期的控制生效）**：增强扫描首次给出结果，门禁发现 CRITICAL，镜像被隔离（tag 删除，摘要保留为 `quarantine-<TAG>`） | 发现基础镜像 OS 包（`linux-libc-dev` 等）有可修复的 CRITICAL；门禁只读了第一页结果 | — |
-| 17:5x | `f92be13` | 修复：门禁读取全部分页；两个 Dockerfile 加 `apt-get upgrade` | 流水线（smoke）成功：门禁通过（无 CRITICAL）→ Deploy-dev 成功，冒烟 200/200 | — | — |
-| 18:06 | `f92be13` | 晋级 Magento 镜像 | **部署前复查拒绝**：构建时门禁看到的是尚未填满的结果，复查时出现 2 个 CRITICAL（`mtdowling/jmespath.php`、vendor 内附带的 lock 文件） | 构建时门禁对 ACTIVE 状态过早放行 | — |
-| 18:0x–18:16 | `d1f0364` / `c4ca7db` | 修复：更新 jmespath.php、删除 vendor 内 lock 文件；门禁在 ACTIVE 时要求两次轮询结果一致 | Magento 镜像（`d1f0364`）通过构建门禁与之后的复查；流水线（`c4ca7db`，smoke）成功并显示「waiting for findings to settle」 | — | 新发现可能在门禁之后才出现，复查只在部署时生效 |
-| 18:2x | `5f53935` | 修复：门禁错误信息中的账号 ID 脱敏 | — | — | — |
-| 18:4x | `4754d6d` | 修复：销毁与残留核对脚本按族名枚举任务定义（`--family-prefix` 需要完整族名） | 残留核对对运行中的环境列出 ACTIVE 修订并退出 1（证明能报出残留） | 之前的版本会漏掉任务定义修订 | — |
+| 17:35–17:46 | `0b1783a` → `cfad03f` → `f68c0d7` | `make preflight` | 首次 FAIL（配额检查把已存在的 VPC 算作新增；EIP 实际用量高于 Service Quotas 返回值）→ 修复；第二次 `make deploy` 时 preflight 因另一个 CDK 进程占用 `cdk.out` 失败 → 修复为独立输出目录；之后 PASS（无删除/替换） | 2 个 preflight 缺陷，已修复 | — |
+| 17:44–17:48 | `f68c0d7` | `make deploy`（更新：信任策略条件、Secret 资源策略、Lambda 代码） | 成功 | — | — |
+| 17:48 | `f68c0d7` | `verify_controls.py` | 6/6 PASS：运维身份读 SP-API Secret 与 DB 主用户 Secret 均 `AccessDeniedException`；部署角色可对本环境 ops 族 RunTask、不能对其他族 RunTask、不能 PassRole 无关角色（IAM 策略模拟）；部署角色信任策略含 SourceAccount + SourceArn | — | IAM 策略模拟不等于真实调用；没有尝试用其他账号扮演角色 |
+| 17:48–17:50 | `f68c0d7` | 流水线 develop | **Build 失败（预期的控制生效）**：增强扫描首次给出结果，门禁发现 CRITICAL，镜像被隔离（tag 删除，摘要保留为 `quarantine-<TAG>`） | 发现基础镜像 OS 包（`linux-libc-dev` 等）有可修复的 CRITICAL；门禁只读了第一页结果 | — |
+| 17:5x | `ef0d6c3` | 修复：门禁读取全部分页；两个 Dockerfile 加 `apt-get upgrade` | 流水线（smoke）成功：门禁通过（无 CRITICAL）→ Deploy-dev 成功，冒烟 200/200 | — | — |
+| 18:06 | `ef0d6c3` | 晋级 Magento 镜像 | **部署前复查拒绝**：构建时门禁看到的是尚未填满的结果，复查时出现 2 个 CRITICAL（`mtdowling/jmespath.php`、vendor 内附带的 lock 文件） | 构建时门禁对 ACTIVE 状态过早放行 | — |
+| 18:0x–18:16 | `e6040a7` / `d663a36` | 修复：更新 jmespath.php、删除 vendor 内 lock 文件；门禁在 ACTIVE 时要求两次轮询结果一致 | Magento 镜像（`e6040a7`）通过构建门禁与之后的复查；流水线（`d663a36`，smoke）成功并显示「waiting for findings to settle」 | — | 新发现可能在门禁之后才出现，复查只在部署时生效 |
+| 18:2x | `a03dc80` | 修复：门禁错误信息中的账号 ID 脱敏 | — | — | — |
+| 18:4x | `2e8d9c3` | 修复：销毁与残留核对脚本按族名枚举任务定义（`--family-prefix` 需要完整族名） | 残留核对对运行中的环境列出 ACTIVE 修订并退出 1（证明能报出残留） | 之前的版本会漏掉任务定义修订 | — |
 
-### 2.2 最终提交上的验证（`5f53935` → `4754d6d`，两者的 CDK 模板、镜像内容与部署脚本相同）
+### 2.2 最终提交上的验证（`a03dc80` → `2e8d9c3`，两者的 CDK 模板、镜像内容与部署脚本相同）
 
 | 时间（UTC） | 提交 | 步骤 | 结果 | 不能证明什么 |
 |---|---|---|---|---|
-| 18:24–18:32 | 部署脚本来自 `5f53935` 工作区；镜像 `d1f0364`（`app/` 与最终提交相同） | **schema 升级 + 维护模式分支**（`promote_image.sh dev d1f0364`）：数据库已有演示表 v1，镜像带 v2 列 | 成功：扫描复查通过 → `migration lock acquired` → `Declarative Schema is not up to date` → `upgrade required -> maintenance window`、`Enabled maintenance mode`（18:27:02）→ `setup:upgrade` 完成，维护模式**保持开启** → 服务滚动到 `web:6` COMPLETED（18:31:08）→ cache-flush 后 `Disabled maintenance mode`（18:31:42）→ 冒烟 `/health_check.php` 200、`/` 200 | 维护期间对外返回 503 没有从客户端角度实测（ALB 仅内网）；迁移失败、超时被停止两条失败路径只有守护测试 |
-| 18:34 | `5f53935` | **回滚到真实旧 Magento 镜像**（`promote_image.sh dev 5f02870`，schema v1 的旧镜像） | **被部署前扫描复查拒绝**（该旧镜像有 56 个 CRITICAL），没有任何变更、未进入迁移 | 旧镜像的迁移检查遇到新 schema 的行为**未实测** |
-| 18:34–18:36 | `5f53935` | `make deploy` | preflight PASS，3 个栈 no changes | 没有在最终提交上「从零创建」（从零创建在开发迭代开始时做过一次） |
-| 18:36–18:38 | `5f53935` | 服务级回滚（`scripts/rollback.sh dev web:3`，不经过迁移与扫描门禁）：旧代码（无 v2 列）运行在 v2 schema 上 | 服务 COMPLETED，目标组 healthy | 只证明健康检查通过；`rollback.sh` 绕过扫描门禁（SECURITY-NOTES 已知风险） |
-| 18:40–18:54 | `5f53935` | 流水线 develop（smoke） | 成功（门禁等待结果稳定后通过；部署前复查通过；冒烟 200/200） | — |
-| 18:5x | `4754d6d` | `make deploy` | preflight PASS，3 个栈 no changes | 同上 |
-| 18:56–19:05 | `4754d6d` | 流水线 develop（smoke） | 成功，冒烟 200/200 | — |
-| 19:05–19:12 | `4754d6d` | 流水线阶段回滚：`rollback-stage --stage-name Deploy-dev`，目标为 `5f53935` 的成功执行 | 成功（executionType=ROLLBACK）：扫描复查通过 → 迁移任务 → 服务回到 `5f53935-smoke` → cache-flush → 冒烟 200/200 | smoke 镜像不碰 schema，回滚不涉及迁移兼容性 |
-| 19:13–19:52 | `4754d6d` | `make verify` | **PASS**：流水线最近一次执行 Succeeded；拒绝路径 6/6 PASS；`promote_image.sh prod` 在交付配置下被拒绝；MCF e2e + outbox 演练 PASS（§2.3） | IAM 策略模拟不等于真实调用；`prod` 拒绝只在本地脚本层面验证（没有 prod 环境） |
-| 19:5x–20:08 | `4754d6d` | `make destroy`、bootstrap 资产清理、`make verify-cleanup` | 3 个栈 destroyed；栈外遗留（任务定义修订、10 个日志组）由脚本清除；bootstrap 桶中本项目对象共删除 20 个版本（按哈希 11、按内容 9）；残留核对退出 0：**已清理，无残留**（DEPLOYMENT-LOG §4–§6） | 标签索引对已删除的 ECS/流日志 ARN 仍有滞后，已逐个确认处于终态 |
+| 18:24–18:32 | 部署脚本来自 `a03dc80` 工作区；镜像 `e6040a7`（`app/` 与最终提交相同） | **schema 升级 + 维护模式分支**（`promote_image.sh dev e6040a7`）：数据库已有演示表 v1，镜像带 v2 列 | 成功：扫描复查通过 → `migration lock acquired` → `Declarative Schema is not up to date` → `upgrade required -> maintenance window`、`Enabled maintenance mode`（18:27:02）→ `setup:upgrade` 完成，维护模式**保持开启** → 服务滚动到 `web:6` COMPLETED（18:31:08）→ cache-flush 后 `Disabled maintenance mode`（18:31:42）→ 冒烟 `/health_check.php` 200、`/` 200 | 维护期间对外返回 503 没有从客户端角度实测（ALB 仅内网）；迁移失败、超时被停止两条失败路径只有守护测试 |
+| 18:34 | `a03dc80` | **回滚到真实旧 Magento 镜像**（`promote_image.sh dev 158d7cc`，schema v1 的旧镜像） | **被部署前扫描复查拒绝**（该旧镜像有 56 个 CRITICAL），没有任何变更、未进入迁移 | 旧镜像的迁移检查遇到新 schema 的行为**未实测** |
+| 18:34–18:36 | `a03dc80` | `make deploy` | preflight PASS，3 个栈 no changes | 没有在最终提交上「从零创建」（从零创建在开发迭代开始时做过一次） |
+| 18:36–18:38 | `a03dc80` | 服务级回滚（`scripts/rollback.sh dev web:3`，不经过迁移与扫描门禁）：旧代码（无 v2 列）运行在 v2 schema 上 | 服务 COMPLETED，目标组 healthy | 只证明健康检查通过；`rollback.sh` 绕过扫描门禁（SECURITY-NOTES 已知风险） |
+| 18:40–18:54 | `a03dc80` | 流水线 develop（smoke） | 成功（门禁等待结果稳定后通过；部署前复查通过；冒烟 200/200） | — |
+| 18:5x | `2e8d9c3` | `make deploy` | preflight PASS，3 个栈 no changes | 同上 |
+| 18:56–19:05 | `2e8d9c3` | 流水线 develop（smoke） | 成功，冒烟 200/200 | — |
+| 19:05–19:12 | `2e8d9c3` | 流水线阶段回滚：`rollback-stage --stage-name Deploy-dev`，目标为 `a03dc80` 的成功执行 | 成功（executionType=ROLLBACK）：扫描复查通过 → 迁移任务 → 服务回到 `a03dc80-smoke` → cache-flush → 冒烟 200/200 | smoke 镜像不碰 schema，回滚不涉及迁移兼容性 |
+| 19:13–19:52 | `2e8d9c3` | `make verify` | **PASS**：流水线最近一次执行 Succeeded；拒绝路径 6/6 PASS；`promote_image.sh prod` 在交付配置下被拒绝；MCF e2e + outbox 演练 PASS（§2.3） | IAM 策略模拟不等于真实调用；`prod` 拒绝只在本地脚本层面验证（没有 prod 环境） |
+| 19:5x–20:08 | `2e8d9c3` | `make destroy`、bootstrap 资产清理、`make verify-cleanup` | 3 个栈 destroyed；栈外遗留（任务定义修订、10 个日志组）由脚本清除；bootstrap 桶中本项目对象共删除 20 个版本（按哈希 11、按内容 9）；残留核对退出 0：**已清理，无残留**（DEPLOYMENT-LOG §4–§6） | 标签索引对已删除的 ECS/流日志 ARN 仍有滞后，已逐个确认处于终态 |
 
 ### 2.3 MCF 桥接端到端（mock SP-API）
 
@@ -76,14 +76,14 @@
 
 | # | 现象 | 修复提交 |
 |---|---|---|
-| 1 | Magento 构建在 `check-modules` 失败：`ComponentRegistrar::getPaths()` 不能静态调用 | `5f02870` |
-| 2 | preflight 配额检查把已存在环境的 VPC 算作新增；Service Quotas 返回的 EIP 配额低于实际用量 | `bb1382d` |
-| 3 | preflight 的 `cdk diff` 被并发 CDK 进程锁住；当前 CLI 不接受 `diff --all` | `015490a` |
-| 4 | 扫描门禁只读第一页（增强扫描的 `findingSeverityCounts` 也只覆盖当页） | `f92be13` |
-| 5 | 基础镜像 OS 包有可修复的 CRITICAL（门禁正确阻断并隔离了镜像） | `f92be13`（`apt-get upgrade`） |
-| 6 | Magento 依赖 `mtdowling/jmespath.php` CRITICAL；vendor 内附带的 lock 文件被扫描器当作已安装依赖 | `d1f0364` |
-| 7 | 增强扫描状态 ACTIVE 时结果尚未填满，构建门禁过早放行（部署前复查拦住了） | `c4ca7db` |
-| 8 | 门禁错误信息引用 AWS CLI 输出时带账号 ID | `5f53935` |
+| 1 | Magento 构建在 `check-modules` 失败：`ComponentRegistrar::getPaths()` 不能静态调用 | `158d7cc` |
+| 2 | preflight 配额检查把已存在环境的 VPC 算作新增；Service Quotas 返回的 EIP 配额低于实际用量 | `cfad03f` |
+| 3 | preflight 的 `cdk diff` 被并发 CDK 进程锁住；当前 CLI 不接受 `diff --all` | `f68c0d7` |
+| 4 | 扫描门禁只读第一页（增强扫描的 `findingSeverityCounts` 也只覆盖当页） | `ef0d6c3` |
+| 5 | 基础镜像 OS 包有可修复的 CRITICAL（门禁正确阻断并隔离了镜像） | `ef0d6c3`（`apt-get upgrade`） |
+| 6 | Magento 依赖 `mtdowling/jmespath.php` CRITICAL；vendor 内附带的 lock 文件被扫描器当作已安装依赖 | `e6040a7` |
+| 7 | 增强扫描状态 ACTIVE 时结果尚未填满，构建门禁过早放行（部署前复查拦住了） | `d663a36` |
+| 8 | 门禁错误信息引用 AWS CLI 输出时带账号 ID | `a03dc80` |
 
 ## 4. 未运行 / 未验证
 

@@ -7,7 +7,7 @@
 - 配置：`config/sandbox.json`（与 `config/sandbox.example.json` 相同；dev + `develop` 流水线 + MCF mock）
 - 标签：`Project=ecommerce-graviton-cicd`、`Purpose=prototype`、`Teardown=after-test`
 - 栈：`proto-ecom-cicd`、`proto-ecom-dev-platform`、`proto-ecom-dev-mcf`
-- 最终验证提交：`4754d6d`（之前的验证提交与发现的问题见 `VERIFICATION.md` §2、§3）
+- 最终验证提交：`2e8d9c3`（之前的验证提交与发现的问题见 `VERIFICATION.md` §2、§3）
 - 时间均为 UTC，2026-10-20
 
 ## 1. 部署
@@ -15,9 +15,9 @@
 | 时间 | 提交 | 命令 | 结果 |
 |---|---|---|---|
 | 16:20:00–16:38:24 | 历史改写前、与 `e6c1834` 相同的 CDK 代码 | `npx -y aws-cdk@2 deploy --all -c config=config/sandbox.json --require-approval never --concurrency 3` | 3 个栈 CREATE_COMPLETE（约 18 分钟，平台栈最长） |
-| 17:44–17:48 | `015490a` | `CONFIRM=<LAST_4_DIGITS> make deploy`（preflight PASS，无删除/替换） | 3 个栈 UPDATE_COMPLETE：服务角色信任策略条件、7 个 Secret 资源策略、Lambda 代码 |
-| 18:34–18:36 | `5f53935` | `make deploy` | preflight PASS；3 个栈 no changes |
-| 18:55 | `4754d6d` | `make deploy` | preflight PASS；3 个栈 no changes |
+| 17:44–17:48 | `f68c0d7` | `CONFIRM=<LAST_4_DIGITS> make deploy`（preflight PASS，无删除/替换） | 3 个栈 UPDATE_COMPLETE：服务角色信任策略条件、7 个 Secret 资源策略、Lambda 代码 |
+| 18:34–18:36 | `a03dc80` | `make deploy` | preflight PASS；3 个栈 no changes |
+| 18:55 | `2e8d9c3` | `make deploy` | preflight PASS；3 个栈 no changes |
 
 另：破坏性变更保护用真实 `cdk diff` 验证过一次（临时把 dev 的 `vpc_cidr` 改掉的本地配置，只做 diff，不部署）：VPC、子网、安全组、目标组等被识别为 replace，`check_destructive.py` 退出码 3 拒绝；`ALLOW_DESTRUCTIVE=1` 后放行（diff 中没有数据存储）。
 
@@ -34,17 +34,17 @@
 
 | # | 步骤 | 结果 |
 |---|---|---|
-| V-1 | 流水线 develop（smoke）在 `600c6ee`、`f92be13`、`c4ca7db`、`5f53935`、`4754d6d` | 成功；`015490a` 的执行在 Build 失败——扫描门禁阻断 CRITICAL 并隔离镜像（控制生效） |
-| V-2 | Magento 镜像构建（`5f02870`、`f92be13`、`d1f0364`） | 成功（`3111335` 失败，缺陷已修复） |
-| V-3 | 首次安装（`5f02870` 镜像） | 成功：迁移锁 → `setup:install` → COMPLETED → cache-flush → 冒烟 200/200 |
-| V-4 | schema 升级 + 维护模式（`d1f0364` 镜像，部署脚本来自最终代码） | 成功：维护模式在 `setup:upgrade` 后保持开启，新任务 COMPLETED 之后由 cache-flush 关闭，冒烟 200/200 |
-| V-5 | 晋级被拒：`f92be13` Magento 镜像、旧 `5f02870` 镜像 | 部署前扫描复查拒绝，服务未变 |
+| V-1 | 流水线 develop（smoke）在 `a58d2fa`、`ef0d6c3`、`d663a36`、`a03dc80`、`2e8d9c3` | 成功；`f68c0d7` 的执行在 Build 失败——扫描门禁阻断 CRITICAL 并隔离镜像（控制生效） |
+| V-2 | Magento 镜像构建（`158d7cc`、`ef0d6c3`、`e6040a7`） | 成功（`3111335` 失败，缺陷已修复） |
+| V-3 | 首次安装（`158d7cc` 镜像） | 成功：迁移锁 → `setup:install` → COMPLETED → cache-flush → 冒烟 200/200 |
+| V-4 | schema 升级 + 维护模式（`e6040a7` 镜像，部署脚本来自最终代码） | 成功：维护模式在 `setup:upgrade` 后保持开启，新任务 COMPLETED 之后由 cache-flush 关闭，冒烟 200/200 |
+| V-5 | 晋级被拒：`ef0d6c3` Magento 镜像、旧 `158d7cc` 镜像 | 部署前扫描复查拒绝，服务未变 |
 | V-6 | 服务级回滚 `rollback.sh dev web:3`（旧代码 + 新 schema） | COMPLETED，目标组 healthy |
-| V-7 | 流水线阶段回滚（`rollback-stage`，目标为 `5f53935` 的成功执行） | 成功（executionType=ROLLBACK）：复查通过 → 迁移 → 服务回到 `5f53935-smoke` → 冒烟 200/200 |
-| V-8 | `make verify`（`4754d6d`，19:13–19:5x） | **PASS**：流水线最近执行 Succeeded；拒绝路径 6/6；受保护晋级被拒；MCF e2e 与 outbox 演练 PASS |
+| V-7 | 流水线阶段回滚（`rollback-stage`，目标为 `a03dc80` 的成功执行） | 成功（executionType=ROLLBACK）：复查通过 → 迁移 → 服务回到 `a03dc80-smoke` → 冒烟 200/200 |
+| V-8 | `make verify`（`2e8d9c3`，19:13–19:5x） | **PASS**：流水线最近执行 Succeeded；拒绝路径 6/6；受保护晋级被拒；MCF e2e 与 outbox 演练 PASS |
 | V-9 | 拒绝路径（`verify_controls.py`） | 控制部署前 3 项 FAIL（预期）；部署后 6/6 PASS |
 
-## 4. 销毁（提交 `4754d6d`）
+## 4. 销毁（提交 `2e8d9c3`）
 
 | 时间 | 命令 | 结果 |
 |---|---|---|
