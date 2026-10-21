@@ -16,7 +16,7 @@
 | `make lint`（ruff + `bash -n`/`sh -n` 全部脚本） | All checks passed | — |
 | `make synth`（`config/sandbox.example.json`；`config/customer.example.json -c synthCheck=true`） | 两套均成功，cdk-nag AwsSolutions 无未确认发现 | customer 用占位实例类与证书合成，不可部署；https/uat/prod/蓝绿未部署过 |
 | `make scan`（gitleaks 8.30.1 全历史 + 运行时生成的假 AWS key canary） | 全历史 0 leaks；canary 被 `aws-access-token` 规则检出（证明扫描器能报错） | canary 只证明 AWS key 规则生效 |
-| `uvx zizmor --persona auditor .github/workflows` | 无发现 | workflow **未在 GitHub 上运行**，仅本地静态检查 |
+| `uvx zizmor --persona auditor .github/workflows` | 无发现 | workflow 已在 GitHub 运行，见下文「GitHub CI」 |
 | `uvx pip-audit -r <uv export>`（107 个依赖） | No known vulnerabilities found | osv-scanner 未安装，未运行 |
 | ASH 3.7.1 `--mode local`（`d663a36` 与文档提交 `e7cdaf1` 各跑一次，源为 `git archive HEAD` 干净副本，输出 `_scan_out/ecommerce_cicd/`，无 zip） | bandit PASSED（280 LOW：测试断言、`REPLACE_ME` 占位串、`subprocess` 调 AWS CLI）；checkov PASSED（2 条带理由的行内跳过）；detect-secrets PASSED；semgrep PASSED；npm-audit PASSED；**cdk-nag、cfn-nag、grype、opengrep、syft：MISSING（未运行：本机无 Docker / 未安装）** | 按规范，扫描器没跑完即视为**未通过**；缺的扫描器交给 CI 补跑。首轮 ASH 有 6 条可处理发现，已在 `53be509` 修复（uv 依赖冷却期、Docker 健康检查/基础镜像说明、workflow 输入、误报标注） |
 | `uv run python -m local.run_mcf_demo` | 跑通：outbox（101 在 EventBridge 不可用时仍推进到 SUBMITTED，事件下一轮补发）、102 两次 503 后成功、103 三次后 EXCEPTION、104 未映射 SKU、105 走 EU 客户端、106 确认丢失后以「已存在」恢复、107 带 `retry=true` 重驱成功、108 发货前取消 | mock 行为由合成收件人名驱动，不代表真实 SP-API 的返回 |
@@ -91,6 +91,14 @@
 - test/uat/prod、`release` 流水线、两道审批、ECS 原生蓝绿、https 监听（证书、私有 DNS）：只由 CDK assertions 验证，**未部署**。
 - live SP-API 客户端未对真实卖家账户运行（假传输层单元测试）。
 - 构建期 `module:enable --all` 生成的 `config.php` 是在沙箱 CodeBuild 上导出的；本机没有 Docker，`config-export` 目标没有在本地运行。
-- GitHub Actions（CI、部署验证 workflow）**未在 GitHub 上运行**，仅本地等效执行（lint、test、synth+nag、gitleaks+canary、zizmor）。
+- CI workflow 已在 GitHub 运行（见下文「GitHub CI」）；部署验证 workflow 未在 GitHub 运行。
 - ASH 中 cdk-nag、cfn-nag、grype、opengrep、syft 未运行（本机无 Docker / 未安装）；osv-scanner 未运行。
 - Magento 店铺侧事件模块、cron、消息队列消费者未实现/未运行；性能、容量与成本未测。
+
+## GitHub CI（2026-10-21）
+
+仓库推送到 GitHub（私有）后，`ci` workflow 在 GitHub 托管 runner（ubuntu-24.04）上运行：run 39526206506，提交 `70216e1`，全部 job 通过（Lint, test, synth with cdk-nag, secret scan；ASH）。
+
+ASH v3.7.1 容器模式（基础镜像改用 Docker Hub 上的同名镜像，见 `ash` job）：10/10 个扫描器通过，0 失败，0 缺失；发现共 280 条，可处理 0 条，抑制 2 条。2 条抑制均为 checkov `CKV_DOCKER_7`（`app/magento/Dockerfile`、`app/smoke/Dockerfile`），理由见 SECURITY-NOTES「ASH / checkov 抑制」。这一结果取代上文本地不完整的 ASH 记录（本机无 Docker，缺 5 个扫描器）。
+
+这不能证明：部署验证 workflow 未在 GitHub 运行（需要目标账号里的 OIDC 角色和带审批人的 environment）。
