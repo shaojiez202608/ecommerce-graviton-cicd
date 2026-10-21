@@ -53,7 +53,7 @@
 | D-47 | cdk-nag 确认项挂在具体构造路径上（路径不存在即报错，按环境条件启用），不再整栈确认 | 整栈 `Validations.of(stack)` | 整栈确认会把 `Resource::*` 等发现对栈内所有资源放行，理由也容易与实际策略不符 |
 | D-48 | `app/etc/config.php`（模块、scopes、themes、i18n）提交到 Git，构建直接使用并校验与代码中的模块一致；模块增删后用 Dockerfile 的 `config-export` 目标（或 `scripts/export_magento_config.sh`）重新生成 | 构建时 `module:enable --all` | 与「config.php 进 Git」一致，模块启用状态可审查、可追溯 |
 | D-49 | 仓库带一个演示模块 `Proto_DeployDemo`（只声明一张表），用来在沙箱里真实走一遍「setup:upgrade + 维护模式」分支 | 不带演示模块，只靠单元测试 | 该分支此前从未在 AWS 上触发；真实项目删除该目录与 config.php 中的一行即可 |
-| D-50 | LICENSE 为 MIT-0，版权行 `Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.`；CODE_OF_CONDUCT 指向亚马逊开源行为准则；SECURITY 走 AWS 漏洞上报页面/aws-security@amazon.com | 保留原版权行与 Contributor Covenant | 规范对齐（aws-samples 惯例）。git 作者仍为 `shaojiez <shaojiez@example.invalid>` |
+| D-50 | LICENSE 为 MIT-0，版权行 `Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.`；CODE_OF_CONDUCT 指向亚马逊开源行为准则；SECURITY 走 AWS 漏洞上报页面/aws-security@amazon.com | 保留原版权行与 Contributor Covenant | 规范对齐（aws-samples 惯例）。git 作者仍为 `shaojiez <shaojiez2026@gmail.com>` |
 | D-51 | 占位符：账号 ID 统一 `111122223333`，其余 `<UPPER_SNAKE>`，主机名 `example.com`；CODEOWNERS 用 `@<MAINTAINER_GITHUB_HANDLE>`（Q-19） | 保留 `<ACCOUNT_ID>`、小写占位符 | 规范对齐 |
 | D-52 | 配置以模板入库（`config/*.example.json`），真实文件 gitignore，`make init` 在缺失时复制；加载时做格式与联动校验，synth 前失败 | 继续提交真实配置 | 规范对齐；避免把证书 ARN（含账号 ID）等真实值提交进仓库 |
 | D-53 | `make preflight` 只读：账号只显示末 4 位并要求输入确认；`cdk diff` 发现删除/替换默认拒绝（`ALLOW_DESTRUCTIVE=1`），uat/prod 的数据存储（RDS、OpenSearch、ElastiCache、EFS、DynamoDB、S3、Secrets）再要求 `ALLOW_DATA_REPLACEMENT=1` | 只靠 CloudFormation 删除策略 | 删除保护只覆盖部分资源；替换（例如改实例标识符）同样会丢数据。没有会额外计费的「真实模型评测」类命令，因此不设 `ALLOW_PAID` |
