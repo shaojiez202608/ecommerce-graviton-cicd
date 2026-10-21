@@ -19,7 +19,7 @@
 | Q-16 | HTTPS 环境的主机名、证书（ACM，部署区域内）与私有 DNS 记录由谁提供与维护？ | `site_hostname` 与 `certificate_arn` 为必填参数；指向内部 ALB 的私有 DNS 记录不在栈内创建 |
 | Q-17 | 部署失败且 schema 已升级时，uat/prod 是保持维护模式等待人工恢复，还是允许旧代码临时服务？ | 交付配置 uat/prod `maintenance_on_failure=keep`，dev/test `disable`（DECISIONS D-42） |
 | Q-18 | MCF 取消的业务规则：店铺侧在什么状态允许取消？发货后取消是否自动转退货？ | 发货前调用 `cancelFulfillmentOrder`；发货后拒绝并发异常事件，退货流程未实现 |
-| Q-19 | 仓库发布后的维护者 GitHub 账号（`.github/CODEOWNERS` 中的 `@<MAINTAINER_GITHUB_HANDLE>`），以及 CI/部署验证 workflow 所需的 GitHub environment（`sandbox-deploy` 的审批人）与 OIDC 角色 | 占位符；workflow 未在 GitHub 上运行 |
+| Q-19 | CI/部署验证 workflow 所需的 GitHub environment（`sandbox-deploy` 的审批人）与 OIDC 角色 | 占位符；workflow 未在 GitHub 上运行 |
 
 已关闭：
 - 原 Q-13（SP-API 是否需要 AWS SigV4 签名）：官方「Connecting to the Selling Partner API」页面的调用步骤只有 LWA 访问令牌、构造 URI、添加请求头（`x-amz-access-token`、`x-amz-date`、`user-agent`），示例写明「no signing information」，未出现 SigV4/IAM 步骤（F-18，2026-10-20 核实）。live 客户端按此只实现 LWA，并发送上述请求头。
