@@ -6,7 +6,7 @@
 - 区域：us-east-1（只用了这一个区域）
 - 配置：`config/sandbox.json`（与 `config/sandbox.example.json` 相同：dev 环境 + `develop` 流水线 + MCF mock，US/na 与 DE/eu 两个市场，`removal_policy=destroy`）
 - **最终验证提交：`2e8d9c3`**（`2e8d9c3772de92f150245992b90ed68671d16eef`）。它与 `a03dc80` 只差销毁/残留核对脚本中枚举任务定义族的修复；之后的提交只改文档（本文件、DEPLOYMENT-LOG、review 表等），tag `v0.1.0` 打在最后一个文档提交上。
-- 账号：员工沙箱账号（`111122223333` 为占位，不记录真实 ID）
+- 账号：可丢弃的沙箱账号（`111122223333` 为占位，不记录真实 ID）
 
 ## 1. 本地检查（最终提交 `2e8d9c3`，不需要 AWS）
 
@@ -19,7 +19,6 @@
 | `uvx zizmor --persona auditor .github/workflows` | 无发现 | workflow **未在 GitHub 上运行**，仅本地静态检查 |
 | `uvx pip-audit -r <uv export>`（107 个依赖） | No known vulnerabilities found | osv-scanner 未安装，未运行 |
 | ASH 3.7.1 `--mode local`（`d663a36` 与文档提交 `e7cdaf1` 各跑一次，源为 `git archive HEAD` 干净副本，输出 `_scan_out/ecommerce_cicd/`，无 zip） | bandit PASSED（280 LOW：测试断言、`REPLACE_ME` 占位串、`subprocess` 调 AWS CLI）；checkov PASSED（2 条带理由的行内跳过）；detect-secrets PASSED；semgrep PASSED；npm-audit PASSED；**cdk-nag、cfn-nag、grype、opengrep、syft：MISSING（未运行：本机无 Docker / 未安装）** | 按规范，扫描器没跑完即视为**未通过**；缺的扫描器交给 CI 补跑。首轮 ASH 有 6 条可处理发现，已在 `53be509` 修复（uv 依赖冷却期、Docker 健康检查/基础镜像说明、workflow 输入、误报标注） |
-| Holmes | **未运行**：本机没有 Holmes | — |
 | `uv run python -m local.run_mcf_demo` | 跑通：outbox（101 在 EventBridge 不可用时仍推进到 SUBMITTED，事件下一轮补发）、102 两次 503 后成功、103 三次后 EXCEPTION、104 未映射 SKU、105 走 EU 客户端、106 确认丢失后以「已存在」恢复、107 带 `retry=true` 重驱成功、108 发货前取消 | mock 行为由合成收件人名驱动，不代表真实 SP-API 的返回 |
 
 测试覆盖（`tests/`，130 个）：MCF 业务（outbox、乐观锁、重驱、确认丢失、429 不当作「不存在」、放弃前确认与轮询器确认、卡在 RECEIVED 的清扫、多区域路由、取消四种情形、首轮即签收补发 Shipped、mock fnSku 确定性）；moto 下的 Lambda 处理函数（SQS 批处理、取消事件、每区域 refresh token、DLQ 重驱）；live 客户端（LWA、请求头含 `x-amz-date`、取消路径、超时）；CDK assertions（https→443 HTTPS 监听 + 证书 + 推荐 TLS 策略、http 只有 80、前缀参数化后快照名与 IAM 前缀一致、扫描门禁参数下发到部署项目、`ecr:BatchDeleteImage`、快照清理权限只在开启快照的环境、imageTag 按环境、init 进程与 stopTimeout、信任策略 SourceAccount/SourceArn、Secret 资源策略、蓝绿两组 UnhealthyHost 告警、intake 超时/批大小/可见性超时、outbox 索引与取消路由、cdk-nag 按构造确认）；配置校验（30+ 拒绝用例）；部署脚本守护（迁移锁、信号陷阱、维护窗口在 cache-flush 后关闭、失败与超时路径、部署前复查扫描、快照清理）；扫描门禁（隔离、只校验模式不改 tag、分页、ACTIVE 时等待结果稳定）；运维脚本（破坏性变更保护的解析与双重开关、bootstrap 资产只选本项目、脱敏）。
@@ -93,5 +92,5 @@
 - live SP-API 客户端未对真实卖家账户运行（假传输层单元测试）。
 - 构建期 `module:enable --all` 生成的 `config.php` 是在沙箱 CodeBuild 上导出的；本机没有 Docker，`config-export` 目标没有在本地运行。
 - GitHub Actions（CI、部署验证 workflow）**未在 GitHub 上运行**，仅本地等效执行（lint、test、synth+nag、gitleaks+canary、zizmor）。
-- ASH 中 cdk-nag、cfn-nag、grype、opengrep、syft 未运行（本机无 Docker / 未安装）；Holmes、osv-scanner 未运行。
+- ASH 中 cdk-nag、cfn-nag、grype、opengrep、syft 未运行（本机无 Docker / 未安装）；osv-scanner 未运行。
 - Magento 店铺侧事件模块、cron、消息队列消费者未实现/未运行；性能、容量与成本未测。

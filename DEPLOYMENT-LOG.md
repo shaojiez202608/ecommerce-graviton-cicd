@@ -2,7 +2,7 @@
 
 本次部署验证记录（替换此前的记录）。
 
-- 账号：员工沙箱账号（`111122223333` 为占位，不记录真实 ID；preflight 只显示并核对末 4 位，未记录）
+- 账号：可丢弃的沙箱账号（`111122223333` 为占位，不记录真实 ID；preflight 只显示并核对末 4 位，未记录）
 - 区域：us-east-1（只用了这一个区域）
 - 配置：`config/sandbox.json`（与 `config/sandbox.example.json` 相同；dev + `develop` 流水线 + MCF mock）
 - 标签：`Project=ecommerce-graviton-cicd`、`Purpose=prototype`、`Teardown=after-test`
